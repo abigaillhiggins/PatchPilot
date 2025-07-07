@@ -18,7 +18,7 @@ source venv/bin/activate  # On Windows use: venv\Scripts\activate
 
 3. Install dependencies:
 ```bash
-pip install -r pipeline_requirements.txt
+pip install -r requirements.txt
 ```
 
 4. Set up environment variables:
