@@ -129,4 +129,65 @@ All endpoints return JSON responses. Common response structures include:
   - `error_output`: Standard error output if any
   - `return_code`: Execution return code
   - `analysis`: Optional analysis of the execution (if requested)
-  - `suggested_improvements`: Optional suggestions for code improvement 
+  - `suggested_improvements`: Optional suggestions for code improvement
+
+## Example Use Case: Creating a String Utility
+
+Here's a complete example of using PatchPilot to create and test a string utility function:
+
+1. Create a todo for the string utility:
+```bash
+curl -X POST http://localhost:8000/todos/ \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "Create String Reversal Utility",
+    "description": "Create a Python function that can reverse strings and check for palindromes",
+    "language": "python",
+    "requirements": [],
+    "context": "The function should handle empty strings and special characters correctly"
+  }'
+```
+
+Response:
+```json
+{
+  "id": 1,
+  "title": "Create String Reversal Utility",
+  "status": "pending"
+}
+```
+
+2. Generate code for the todo:
+```bash
+curl -X POST http://localhost:8000/generate-code/1
+```
+
+Response:
+```json
+{
+  "file_path": "patches/20250707_134732_create_a_python_function_that_reverses_a_string/src/string_utils.py",
+  "patch_id": "20250707_134732_create_a_python_function_that_reverses_a_string"
+}
+```
+
+3. Run and analyze the generated code:
+```bash
+curl -X POST http://localhost:8000/run-patch/1?analyze=true
+```
+
+4. Check execution status:
+```bash
+curl http://localhost:8000/patch-status/20250707_134732_create_a_python_function_that_reverses_a_string
+```
+
+5. If satisfied with the results, commit the patch:
+```bash
+curl -X POST http://localhost:8000/git/push-patch/20250707_134732_create_a_python_function_that_reverses_a_string \
+  -H "Content-Type: application/json" \
+  -d '{
+    "commit_message": "Add string reversal utility with palindrome check",
+    "branch": "feature/string-utils"
+  }'
+```
+
+The generated code will be saved in the patches directory, tested, analyzed for potential improvements, and can be committed to your repository. PatchPilot handles all the boilerplate of creating, testing, and managing the code changes. 
