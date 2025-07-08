@@ -7,15 +7,16 @@ import os
 import logging
 import subprocess
 from typing import List, Dict, Optional, Tuple, Any
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
-from openai import OpenAI
+import requests
 import ast
 import black
 import autopep8
 import shutil
 import sys
 import json
+from openai import OpenAI
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,8 @@ class CodeTask:
     """Represents a coding task with requirements and context."""
     description: str
     language: str
-    requirements: List[str]
+    requirements: List[str]  # Task requirements/features
+    package_requirements: List[str] = field(default_factory=list)  # Actual Python package dependencies
     context: Optional[str] = None
     created_at: str = datetime.now().isoformat()
     config_files: Optional[List[str]] = None
@@ -294,20 +296,32 @@ class CodeGenerator:
         
         Args:
             api_key: OpenAI API key
-            project_dir: Base directory for generated code
+            project_dir: Root directory of the project
         """
         self.api_key = api_key
-        self.project_dir = project_dir
-        self.patches_dir = os.path.join(project_dir, "patches")
-        self.max_improvement_attempts = 3
+        self.project_dir = os.path.abspath(project_dir)
+        self.patches_dir = os.path.join(self.project_dir, "patches")
         
+        # Validate API key
+        if not (api_key and len(api_key) > 40 and api_key.startswith('sk-')):
+            raise ValueError("Invalid OpenAI API key format")
+
         # Initialize OpenAI client
         try:
             self.client = OpenAI(api_key=api_key)
+            # Test the client with a minimal API call
+            self.client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[{"role": "system", "content": "Test"}, {"role": "user", "content": "Test"}],
+                max_tokens=1
+            )
+            logger.info("OpenAI API key validated successfully.")
         except Exception as e:
-            logger.error(f"Failed to initialize OpenAI client: {e}")
             self.client = None
+            logger.error(f"Failed to initialize OpenAI client: {str(e)}")
+            logger.warning("Code generation and analysis features will be disabled.")
             
+        self.max_improvement_attempts = 3
         self._ensure_directories_exist()
 
     def _ensure_directories_exist(self):
@@ -330,20 +344,34 @@ class CodeGenerator:
         os.makedirs(src_dir, exist_ok=True)
 
     def _create_config_files(self, patch_dir: str, task: CodeTask) -> None:
-        """Create basic requirements.txt file."""
-        # Only create requirements.txt
+        """Create basic requirements.txt file with validated package requirements."""
         if task.language.lower() == 'python':
             with open(os.path.join(patch_dir, 'requirements.txt'), 'w') as f:
                 f.write("# Python dependencies\n")
-                f.write("pytest>=7.0.0\n")  # Always include pytest for testing
-                # Add task-specific requirements
-                for req in task.requirements:
-                    if '>=' in req or '==' in req or '<=' in req:
-                        # If requirement already has version specifier, use as is
-                        f.write(f"{req}\n")
-                    else:
+                
+                # Add core testing package
+                f.write("pytest>=7.0.0\n")
+                
+                # Add task-specific package requirements
+                for req in task.package_requirements:
+                    # Basic validation of package name format
+                    if not any(char in req for char in ['<', '>', '=', ' ']):
                         # If no version specifier, add latest version
                         f.write(f"{req}>=1.0.0\n")
+                    else:
+                        # If requirement already has version specifier, use as is
+                        f.write(f"{req}\n")
+            
+            # Store task requirements in a separate metadata file
+            metadata = {
+                "description": task.description,
+                "language": task.language,
+                "task_requirements": task.requirements,
+                "context": task.context,
+                "created_at": task.created_at
+            }
+            with open(os.path.join(patch_dir, "metadata.json"), 'w') as f:
+                json.dump(metadata, f, indent=2)
 
     def _format_code(self, code: str, language: str) -> str:
         """Format the generated code according to language standards."""
@@ -443,106 +471,65 @@ class CodeGenerator:
             # Create prompt for code generation
             prompt = self._create_generation_prompt(task)
             
-            # Generate code
+            # Generate code using OpenAI's API
             if self.client:
-                # Use GPT-3.5 Turbo for code generation
-                response = self.client.chat.completions.create(
-                    model="gpt-3.5-turbo",
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": """You are an expert programmer. Generate clean, efficient, and well-documented code.
-                            Follow these rules:
-                            1. Include proper type hints and docstrings
-                            2. Add input validation where appropriate
-                            3. Follow language-specific best practices
-                            4. Include example usage in the main block
-                            5. Generate test data and test cases
-                            6. Return ONLY the implementation code, no markdown or explanation
-                            7. NEVER include triple backticks (```) or language tags in your response
-                            8. If the code processes files, ALWAYS include example input files
-                            9. Add a run_example() function that demonstrates usage"""
-                        },
-                        {"role": "user", "content": prompt}
-                    ],
-                    temperature=0.1,  # Lower temperature for more focused generation
-                    max_tokens=2000,
-                    top_p=0.9,
-                    frequency_penalty=0.0,
-                    presence_penalty=0.0,
-                    response_format={ "type": "text" }
-                )
+                # Use OpenAI API for code generation
+                try:
+                    response = self.client.chat.completions.create(
+                        model="gpt-4-turbo-preview",
+                        messages=[
+                            {
+                                "role": "system",
+                                "content": """You are an expert programmer. Generate clean, efficient, and well-documented code.
+                                Follow these rules:
+                                1. Include proper type hints and docstrings
+                                2. Add input validation where appropriate
+                                3. Follow language-specific best practices
+                                4. Include example usage in the main block
+                                5. Generate test data and test cases
+                                6. Return ONLY the implementation code, no markdown or explanation
+                                7. NEVER include triple backticks (```) or language tags in your response
+                                8. If the code processes files, ALWAYS include example input files
+                                9. Add a run_example() function that demonstrates usage"""
+                            },
+                            {"role": "user", "content": prompt}
+                        ]
+                    )
+                except Exception as api_error:
+                    logger.error(f"API call failed with error: {str(api_error)}")
+                    raise
                 
                 # Get the generated code
-                if response and response.choices:
-                    code = response.choices[0].message.content.strip()
-                    
-                    # Clean the code
-                    code = clean_code_document(code)
-                    
-                    # Create file path
-                    safe_name = "".join(c if c.isalnum() else "_" for c in task.description.lower())
-                    file_name = f"{safe_name[:50]}{self.LANGUAGE_EXTENSIONS.get(task.language.lower(), '.txt')}"
-                    src_dir = os.path.join(patch_dir, "src")
-                    file_path = os.path.join(src_dir, file_name)
-                    
-                    # Save the code
-                    with open(file_path, "w") as f:
-                        f.write(code)
-                        
-                    # Clean the file of backticks
-                    clean_file_of_backticks(file_path)
-                    
-                    # Create metadata file
-                    metadata = {
-                        "description": task.description,
-                        "language": task.language,
-                        "requirements": task.requirements,
-                        "created_at": task.created_at
-                    }
-                    
-                    with open(os.path.join(patch_dir, "metadata.txt"), "w") as f:
-                        json.dump(metadata, f, indent=2)
-                    
-                    # Generate test data if needed
-                    if "csv" in task.description.lower() or "file" in task.description.lower():
-                        test_data_prompt = f"""Generate example test data for this code. Requirements:
-                        1. Task: {task.description}
-                        2. Make it realistic but simple
-                        3. Include edge cases
-                        4. Return ONLY the test data content, no explanations
-                        5. Format appropriately for the file type
-                        6. Keep it small (3-5 records)"""
-                        
-                        test_data_response = self.client.chat.completions.create(
-                            model="gpt-3.5-turbo",
-                            messages=[
-                                {"role": "system", "content": "You are a data generation expert. Generate realistic test data."},
-                                {"role": "user", "content": test_data_prompt}
-                            ],
-                            temperature=0.1,
-                            max_tokens=500,
-                            response_format={ "type": "text" }
-                        )
-                        
-                        if test_data_response and test_data_response.choices:
-                            test_data = test_data_response.choices[0].message.content.strip()
-                            test_data_file = os.path.join(src_dir, "test_data.csv")
-                            with open(test_data_file, "w") as f:
-                                f.write(test_data)
-                    
-                    # Return the generated code
-                    return GeneratedCode(
-                        content=code,
-                        language=task.language,
-                        file_path=os.path.relpath(file_path, self.patches_dir),
-                        description=task.description,
-                        created_at=task.created_at
-                    )
+                code = response.choices[0].message.content.strip()
+                
+                # Clean the code
+                code = clean_code_document(code)
+                
+                # Create file path
+                safe_name = "".join(c if c.isalnum() else "_" for c in task.description.lower())
+                file_name = f"{safe_name[:50]}{self.LANGUAGE_EXTENSIONS.get(task.language.lower(), '.txt')}"
+                src_dir = os.path.join(patch_dir, "src")
+                file_path = os.path.join(src_dir, file_name)
+                
+                # Format the code
+                code = self._format_code(code, task.language)
+                
+                # Create GeneratedCode object
+                generated_code = GeneratedCode(
+                    content=code,
+                    language=task.language,
+                    file_path=file_path,
+                    description=task.description
+                )
+                
+                # Save the code
+                if self.save_code(generated_code):
+                    return generated_code
                 else:
-                    raise ValueError("No code generated from OpenAI API")
+                    raise Exception("Failed to save generated code")
             else:
-                raise ValueError("OpenAI client not initialized")
+                raise ValueError("API key not provided")
+                
         except Exception as e:
             logger.error(f"Failed to generate code: {str(e)}")
             raise
@@ -619,19 +606,10 @@ class CodeGenerator:
             return False, str(e)
 
     def assess_output(self, output: str, error_output: str, task: CodeTask) -> tuple[bool, str, list[str]]:
-        """Assess the execution output and determine if improvements are needed.
-        
-        Args:
-            output: Standard output from code execution
-            error_output: Standard error output from code execution
-            task: Original code generation task
-            
-        Returns:
-            tuple[bool, str, list[str]]: (needs_improvement, analysis, suggested_fixes)
-        """
+        """Assess the execution output and determine if improvements are needed."""
         try:
             if not self.client:
-                return False, "OpenAI client not available", []
+                return False, "OpenAI API key not available", []
 
             # Create prompt for output analysis
             prompt = f"""
@@ -666,7 +644,7 @@ class CodeGenerator:
                 ]
             )
 
-            analysis = response.choices[0].message.content
+            analysis = response.choices[0].message.content.strip()
 
             # Parse if improvements needed and specific fixes
             needs_improvement = any(indicator in analysis.lower() for indicator in [
@@ -696,101 +674,65 @@ class CodeGenerator:
                 fixes = [fix.strip() for fix in fix_response.choices[0].message.content.split('\n') if fix.strip()]
 
             return needs_improvement, analysis, fixes
-
         except Exception as e:
             logger.error(f"Error assessing output: {str(e)}")
             return False, f"Error in assessment: {str(e)}", []
 
-    def improve_code(self, patch_dir: str, task: CodeTask, analysis: str, fixes: list[str]) -> bool:
-        """Improve code based on execution analysis and suggested fixes.
-        
-        Args:
-            patch_dir: Path to the patch directory
-            task: Original code generation task
-            analysis: Analysis of the execution output
-            fixes: List of specific fixes needed
-            
-        Returns:
-            bool: True if improvements were made successfully
-        """
+    def improve_code(self, code: str, fixes: list[str], task: CodeTask) -> str:
+        """Improve the code based on suggested fixes."""
         try:
             if not self.client:
-                return False
-
-            # Find main source file
-            src_dir = os.path.join(patch_dir, "src")
-            source_files = [f for f in os.listdir(src_dir) if os.path.isfile(os.path.join(src_dir, f))]
-            if not source_files:
-                return False
-            
-            main_file = source_files[0]
-            main_file_path = os.path.join(src_dir, main_file)
-
-            # Read current code
-            with open(main_file_path, 'r') as f:
-                current_code = f.read()
+                return code
 
             # Create prompt for code improvement
             prompt = f"""
-            Improve this code based on execution analysis and suggested fixes:
+            Original code:
+            {code}
 
-            Current Code:
-            {current_code}
+            Required improvements:
+            {chr(10).join(f'- {fix}' for fix in fixes)}
 
-            Task Description: {task.description}
+            Task description: {task.description}
             Language: {task.language}
             Requirements:
             {chr(10).join(f'- {req}' for req in task.requirements)}
 
-            Analysis of Issues:
-            {analysis}
-
-            Needed Fixes:
-            {chr(10).join(f'- {fix}' for fix in fixes)}
-
-            Please provide the complete improved code that fixes these issues while maintaining the original functionality.
+            Please provide the improved code that addresses all the required improvements.
+            Return ONLY the implementation code, no markdown or explanation.
             """
 
             # Get improved code from OpenAI
             response = self.client.chat.completions.create(
                 model="gpt-4-turbo-preview",
                 messages=[
-                    {"role": "system", "content": "You are a code improvement expert. Provide improved code that fixes identified issues."},
+                    {
+                        "role": "system",
+                        "content": """You are an expert programmer. Improve the code while maintaining its core functionality.
+                        Follow these rules:
+                        1. Include proper type hints and docstrings
+                        2. Add input validation where appropriate
+                        3. Follow language-specific best practices
+                        4. Include example usage in the main block
+                        5. Generate test data and test cases
+                        6. Return ONLY the implementation code, no markdown or explanation
+                        7. NEVER include triple backticks (```) or language tags in your response
+                        8. If the code processes files, ALWAYS include example input files
+                        9. Add a run_example() function that demonstrates usage"""
+                    },
                     {"role": "user", "content": prompt}
                 ]
             )
 
-            improved_code = response.choices[0].message.content
-
-            # Extract code block if present
-            if "```" in improved_code:
-                improved_code = improved_code.split("```")[1]
-                if improved_code.startswith(task.language):
-                    improved_code = improved_code[len(task.language):].strip()
-
-            # Format the improved code
+            improved_code = response.choices[0].message.content.strip()
+            
+            # Clean and format the improved code
+            improved_code = clean_code_document(improved_code)
             improved_code = self._format_code(improved_code, task.language)
-
-            # Save improved code
-            with open(main_file_path, 'w') as f:
-                f.write(improved_code)
-
-            # Update metadata to reflect improvements
-            metadata_path = os.path.join(patch_dir, "metadata.txt")
-            with open(metadata_path, 'a') as f:
-                f.write("\nImprovements Made:\n")
-                f.write(f"Timestamp: {datetime.now().isoformat()}\n")
-                f.write("Analysis:\n")
-                f.write(f"{analysis}\n")
-                f.write("Fixes Applied:\n")
-                for fix in fixes:
-                    f.write(f"- {fix}\n")
-
-            return True
-
+            
+            return improved_code
         except Exception as e:
             logger.error(f"Error improving code: {str(e)}")
-            return False
+            return code
 
     def run_and_improve(self, patch_dir: str, task: CodeTask) -> tuple[bool, str]:
         """Run code and recursively improve it based on output.
@@ -804,7 +746,7 @@ class CodeGenerator:
         """
         try:
             if not self.client:
-                return False, "OpenAI client not initialized - check API key"
+                return False, "OpenAI API key not initialized - check configuration"
 
             attempts = 0
             while attempts < self.max_improvement_attempts:
@@ -834,7 +776,7 @@ class CodeGenerator:
 
                 # Try to improve the code
                 try:
-                    if not self.improve_code(patch_dir, task, analysis, fixes):
+                    if not self.improve_code(output, fixes, task):
                         return False, f"Failed to improve code after attempt {attempts + 1}"
                 except Exception as e:
                     if "invalid_api_key" in str(e):

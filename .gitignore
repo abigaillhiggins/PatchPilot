@@ -11,6 +11,7 @@ patches/*
 __pycache__/
 *.py[cod]
 *$py.class
+.pytest_cache/
 
 # Distribution / packaging
 dist/
@@ -24,4 +25,17 @@ build/
 .vscode/
 .idea/
 *.swp
-*.swo 
+*.swo
+
+# Database files
+*.db
+*.sqlite3
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+
+# OS specific files
+.DS_Store
+Thumbs.db 

@@ -29,10 +29,10 @@ export DB_PATH="todos.db"  # Optional, defaults to todos.db
 
 5. Run the server:
 ```bash
-python -m src.api.server
+PYTHONPATH=. python run.py server --port 8002
 ```
 
-The server will start on `http://localhost:8000`
+The server will start on `http://localhost:8002`
 
 ## API Endpoints
 
@@ -40,33 +40,33 @@ The server will start on `http://localhost:8000`
 
 ```bash
 # Initialize Git Repository
-curl -X POST http://localhost:8000/git/init
+curl -X POST http://localhost:8002/git/init
 
 # Configure Git User
-curl -X POST http://localhost:8000/git/config \
+curl -X POST http://localhost:8002/git/config \
   -H "Content-Type: application/json" \
   -d '{"name": "Your Name", "email": "your.email@example.com"}'
 
 # Add Remote
-curl -X POST http://localhost:8000/git/remote \
+curl -X POST http://localhost:8002/git/remote \
   -H "Content-Type: application/json" \
   -d '{"name": "origin", "url": "https://github.com/username/repo.git"}'
 
 # Create Commit
-curl -X POST http://localhost:8000/git/commit \
+curl -X POST http://localhost:8002/git/commit \
   -H "Content-Type: application/json" \
   -d '{"message": "Your commit message", "files": ["path/to/file1", "path/to/file2"]}'
 
 # Push Changes
-curl -X POST http://localhost:8000/git/push \
+curl -X POST http://localhost:8002/git/push \
   -H "Content-Type: application/json" \
   -d '{"remote": "origin", "branch": "main"}'
 
 # Get Git Status
-curl http://localhost:8000/git/status
+curl http://localhost:8002/git/status
 
 # Push Specific Patch
-curl -X POST http://localhost:8000/git/push-patch/{patch_id} \
+curl -X POST http://localhost:8002/git/push-patch/{patch_id} \
   -H "Content-Type: application/json" \
   -d '{"commit_message": "Optional custom message", "remote": "origin", "branch": "main"}'
 ```
@@ -75,46 +75,47 @@ curl -X POST http://localhost:8000/git/push-patch/{patch_id} \
 
 ```bash
 # Create Todo
-curl -X POST http://localhost:8000/todos/ \
+curl -X POST http://localhost:8002/todos/ \
   -H "Content-Type: application/json" \
   -d '{
     "title": "Task title",
     "description": "Task description",
     "language": "python",
-    "requirements": ["package1", "package2"],
+    "requirements": ["Feature requirement 1", "Feature requirement 2"],
+    "package_requirements": ["package1>=1.0.0", "package2>=2.0.0"],
     "context": "Additional context",
     "metadata": {"key": "value"}
   }'
 
 # List All Todos
-curl http://localhost:8000/todos/
+curl http://localhost:8002/todos/
 
 # Complete Todo
-curl -X PUT http://localhost:8000/todos/{todo_id}/complete
+curl -X PUT http://localhost:8002/todos/{todo_id}/complete
 
 # Delete Todo
-curl -X DELETE http://localhost:8000/todos/{todo_id}
+curl -X DELETE http://localhost:8002/todos/{todo_id}
 
 # Search Todos
-curl "http://localhost:8000/todos/search?query=your_search_term"
+curl "http://localhost:8002/todos/search?query=your_search_term"
 ```
 
 ### Code Generation and Execution
 
 ```bash
 # Generate Code for Todo
-curl -X POST http://localhost:8000/generate-code/{todo_id}
+curl -X POST http://localhost:8002/generate-code/{todo_id}
 
 # Run Patch with Analysis
-curl -X POST http://localhost:8000/run-patch/{todo_id}?analyze=true
+curl -X POST http://localhost:8002/run-patch/{todo_id}?analyze=true
 
 # Execute Patch Directly
-curl -X POST http://localhost:8000/execute-patch/ \
+curl -X POST http://localhost:8002/execute-patch/ \
   -H "Content-Type: application/json" \
   -d '{"patch_id": "your_patch_id", "analyze": true}'
 
 # Get Patch Status
-curl http://localhost:8000/patch-status/{patch_id}
+curl http://localhost:8002/patch-status/{patch_id}
 ```
 
 ## Response Models
@@ -131,58 +132,102 @@ All endpoints return JSON responses. Common response structures include:
   - `analysis`: Optional analysis of the execution (if requested)
   - `suggested_improvements`: Optional suggestions for code improvement
 
-## Example Use Case: Creating a String Utility
+## Example Use Cases
 
-Here's a complete example of using PatchPilot to create and test a string utility function:
+### Example 1: Creating a JSON Schema Validator
 
-1. Create a todo for the string utility:
+Here's a complete example of using PatchPilot to create and test a JSON schema validator:
+
+1. Create a todo for the validator:
 ```bash
-curl -X POST http://localhost:8000/todos/ \
+curl -X POST http://localhost:8002/todos/ \
   -H "Content-Type: application/json" \
   -d '{
-    "title": "Create String Reversal Utility",
-    "description": "Create a Python function that can reverse strings and check for palindromes",
+    "title": "JSON Schema Validator",
+    "description": "Create a function that validates a given JSON object against a schema",
     "language": "python",
-    "requirements": [],
-    "context": "The function should handle empty strings and special characters correctly"
+    "requirements": [
+      "Support nested objects",
+      "Support array validation",
+      "Support type validation"
+    ],
+    "package_requirements": ["jsonschema>=4.0.0"],
+    "context": "We need a reusable validation function",
+    "metadata": {
+      "type": "utility",
+      "priority": "high"
+    }
   }'
 ```
 
 Response:
 ```json
 {
-  "id": 1,
-  "title": "Create String Reversal Utility",
-  "status": "pending"
+  "id": 3,
+  "title": "JSON Schema Validator",
+  "description": "Create a function that validates a given JSON object against a schema",
+  "completed": false,
+  "created_at": "2025-07-08T15:52:48.402915",
+  "language": "python",
+  "requirements": ["Support nested objects", "Support array validation", "Support type validation"],
+  "context": "We need a reusable validation function",
+  "metadata": {"type": "utility", "priority": "high"},
+  "patch_id": null
 }
 ```
 
 2. Generate code for the todo:
 ```bash
-curl -X POST http://localhost:8000/generate-code/1
+curl -X POST http://localhost:8002/generate-code/3
 ```
 
-Response:
-```json
-{
-  "file_path": "patches/20250707_134732_create_a_python_function_that_reverses_a_string/src/string_utils.py",
-  "patch_id": "20250707_134732_create_a_python_function_that_reverses_a_string"
-}
+The generated code will include:
+- Type validation for different JSON types (object, array, string, number, boolean)
+- Support for nested object validation
+- Array validation with item type checking
+- Required field validation
+- A comprehensive example showing how to use the validator
+
+### Example 2: Creating a String Utility
+
+Here's another example of using PatchPilot to create and test a string utility function:
+
+1. Create a todo for the string utility:
+```bash
+curl -X POST http://localhost:8002/todos/ \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "Create String Reversal Utility",
+    "description": "Create a Python function that can reverse strings and check for palindromes",
+    "language": "python",
+    "requirements": [
+      "Handle empty strings",
+      "Support special characters",
+      "Case-sensitive palindrome check"
+    ],
+    "package_requirements": [],
+    "context": "The function should handle empty strings and special characters correctly"
+  }'
+```
+
+2. Generate code for the todo:
+```bash
+curl -X POST http://localhost:8002/generate-code/1
 ```
 
 3. Run and analyze the generated code:
 ```bash
-curl -X POST http://localhost:8000/run-patch/1?analyze=true
+curl -X POST http://localhost:8002/run-patch/1?analyze=true
 ```
 
 4. Check execution status:
 ```bash
-curl http://localhost:8000/patch-status/20250707_134732_create_a_python_function_that_reverses_a_string
+curl http://localhost:8002/patch-status/20250707_134732_create_a_python_function_that_reverses_a_string
 ```
 
 5. If satisfied with the results, commit the patch:
 ```bash
-curl -X POST http://localhost:8000/git/push-patch/20250707_134732_create_a_python_function_that_reverses_a_string \
+curl -X POST http://localhost:8002/git/push-patch/20250707_134732_create_a_python_function_that_reverses_a_string \
   -H "Content-Type: application/json" \
   -d '{
     "commit_message": "Add string reversal utility with palindrome check",

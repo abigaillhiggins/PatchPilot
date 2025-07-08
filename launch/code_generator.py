@@ -14,7 +14,6 @@ import ast
 import black
 import autopep8
 import shutil
-from mcp_client import MCPClient, MCPContext
 import sys
 import json
 
@@ -29,7 +28,6 @@ class CodeTask:
     context: Optional[str] = None
     created_at: str = datetime.now().isoformat()
     config_files: Optional[List[str]] = None
-    mcp_context: Optional[MCPContext] = None
 
 @dataclass
 class GeneratedCode:
@@ -291,13 +289,16 @@ class CodeGenerator:
         ]
     }
 
-    def __init__(self, api_key: str, project_dir: str = ".", mcp_url: Optional[str] = None, mcp_api_key: Optional[str] = None):
+    def __init__(self, api_key: str, project_dir: str = "."):
         """Initialize the code generator."""
         self.project_dir = project_dir
         self.patches_dir = os.path.join(project_dir, "patches")
-        self.mcp_client = MCPClient(mcp_url, mcp_api_key) if mcp_url else None
         self._ensure_directories_exist()
         self.max_improvement_attempts = 3  # Maximum number of recursive improvement attempts
+
+        # Validate API key
+        if not (api_key and len(api_key) > 40 and api_key.startswith('sk-')):
+            raise ValueError("Invalid OpenAI API key format")
 
         # Validate and initialize OpenAI client
         if not api_key or api_key == "dummy_key_for_testing":
@@ -324,7 +325,7 @@ class CodeGenerator:
             self.client = OpenAI(api_key=api_key)
             # Test the client with a minimal API call
             self.client.chat.completions.create(
-                model="gpt-3.5-turbo",
+                model="gpt-4-turbo-preview",
                 messages=[{"role": "system", "content": "Test"}, {"role": "user", "content": "Test"}],
                 max_tokens=1
             )
@@ -415,32 +416,6 @@ class CodeGenerator:
         if task.context:
             prompt += f"\nContext:\n{task.context}\n"
         
-        # Add MCP context if available
-        if task.mcp_context:
-            prompt += "\nWorkspace Context:\n"
-            
-            # Add current file context
-            if task.mcp_context.current_file:
-                prompt += f"- Current file: {task.mcp_context.current_file}\n"
-            
-            # Add Git context
-            if task.mcp_context.git_context:
-                prompt += "- Git context:\n"
-                if 'branch' in task.mcp_context.git_context:
-                    prompt += f"  - Branch: {task.mcp_context.git_context['branch']}\n"
-                if 'modified_files' in task.mcp_context.git_context:
-                    prompt += "  - Modified files:\n"
-                    for file in task.mcp_context.git_context['modified_files']:
-                        prompt += f"    - {file}\n"
-            
-            # Add language context
-            if task.mcp_context.language_context:
-                prompt += "- Language context:\n"
-                if 'dependencies' in task.mcp_context.language_context:
-                    prompt += "  - Dependencies:\n"
-                    for dep in task.mcp_context.language_context['dependencies']:
-                        prompt += f"    - {dep}\n"
-        
         return prompt
 
     def _get_file_path(self, patch_dir: str, file_name: str, task: CodeTask) -> str:
@@ -483,10 +458,6 @@ class CodeGenerator:
     def generate_code(self, task: CodeTask) -> GeneratedCode:
         """Generate code based on task description and requirements."""
         try:
-            # Get MCP context if available
-            if self.mcp_client and not task.mcp_context:
-                task.mcp_context = self._get_mcp_context(task)
-            
             # Create a unique patch directory for this task
             patch_dir = self._get_patch_directory(task)
             
@@ -897,35 +868,4 @@ class CodeGenerator:
 
         except Exception as e:
             logger.error(f"Error in run and improve: {str(e)}")
-            return False, str(e)
-
-    def _get_mcp_context(self, task: CodeTask) -> Optional[MCPContext]:
-        """Get context information from MCP server if available."""
-        if not self.mcp_client:
-            return None
-            
-        try:
-            # Get basic context
-            context = self.mcp_client.get_context(self.project_dir)
-            
-            # Enrich with additional information
-            if context:
-                # Get Git information
-                git_info = self.mcp_client.get_git_info(self.project_dir)
-                if git_info:
-                    context.git_context = git_info
-                
-                # Get language information
-                lang_info = self.mcp_client.get_language_info()
-                if lang_info:
-                    context.language_context = lang_info
-                
-                # Get project information
-                proj_info = self.mcp_client.get_project_info(self.project_dir)
-                if proj_info:
-                    context.project_context = proj_info
-            
-            return context
-        except Exception as e:
-            logger.error(f"Error getting MCP context: {e}")
-            return None 
+            return False, str(e) 

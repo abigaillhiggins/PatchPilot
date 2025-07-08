@@ -1,0 +1,74 @@
+{
+    "decision_making": {
+        "risk_thresholds": {
+            "low": 0.2,
+            "medium": 0.5,
+            "high": 0.8
+        },
+        "max_attempts": 3,
+        "learning_rate": 0.1
+    },
+    "deployment": {
+        "environments": {
+            "staging": {
+                "health_check_url": "http://staging/health",
+                "canary_percentage": 10,
+                "timeout_seconds": 300,
+                "rollback_strategy": "immediate"
+            },
+            "production": {
+                "health_check_url": "http://production/health",
+                "canary_percentage": 5,
+                "timeout_seconds": 600,
+                "rollback_strategy": "gradual"
+            }
+        },
+        "required_test_coverage": 80,
+        "required_success_rate": 0.95
+    },
+    "error_recovery": {
+        "max_retries": 3,
+        "retry_delay_seconds": 60,
+        "error_patterns": {
+            "dependency_missing": {
+                "pattern": "ModuleNotFoundError|ImportError",
+                "solution": "install_dependency"
+            },
+            "permission_denied": {
+                "pattern": "PermissionError|AccessDenied",
+                "solution": "elevate_permissions"
+            },
+            "resource_exhausted": {
+                "pattern": "MemoryError|TimeoutError",
+                "solution": "optimize_resources"
+            }
+        }
+    },
+    "testing": {
+        "coverage_targets": {
+            "unit": 90,
+            "integration": 80,
+            "performance": 70
+        },
+        "performance_thresholds": {
+            "response_time_ms": 200,
+            "memory_mb": 512,
+            "cpu_percent": 75
+        }
+    },
+    "metrics": {
+        "collection_interval_seconds": 60,
+        "retention_days": 30,
+        "alert_thresholds": {
+            "error_rate": 0.05,
+            "latency_ms": 1000,
+            "memory_usage_percent": 90
+        }
+    },
+    "learning": {
+        "decision_weight_decay": 0.95,
+        "min_samples_for_learning": 10,
+        "max_pattern_memory": 1000,
+        "confidence_threshold": 0.8
+    }
+} 

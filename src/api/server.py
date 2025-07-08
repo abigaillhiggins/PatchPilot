@@ -10,13 +10,14 @@ import asyncio
 import logging
 import subprocess
 from typing import List, Optional, Dict, Tuple, Any
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 from datetime import datetime
 from src.core.models import TodoItem
 from src.core.db_utils import DatabaseManager
 from src.core.todo_commands import TodoCommands
 from src.generators.code_generator import CodeGenerator, CodeTask, clean_code_document, clean_file_of_triple_quotes, clean_file_of_backticks
+from src.core.autonomous_manager import AutonomousManager, DecisionContext
 from openai import OpenAI
 from src.utils.env_manager import IsolatedEnvironment
 from src.utils.git_manager import GitManager
@@ -42,9 +43,11 @@ if not api_key:
     logger.warning("No OpenAI API key found in environment. Using mock API key for testing.")
     api_key = "sk-mock-key-for-testing"
 
-# Initialize code generator and git manager
-code_generator = CodeGenerator(api_key=api_key, project_dir=os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+# Initialize code generator, git manager, and autonomous manager
+workspace_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+code_generator = CodeGenerator(api_key=api_key, project_dir=workspace_root)
 git_manager = GitManager(os.path.abspath(os.path.dirname(__file__)))
+autonomous_manager = AutonomousManager(api_key=api_key, project_dir=workspace_root)
 
 # Store for patch run results and tasks
 patch_run_results: Dict[str, Dict[str, Any]] = {}
@@ -391,7 +394,7 @@ CRITICAL: DO NOT include any triple backticks (```) or language tags in your res
                     return
                     
                 response = code_generator.client.chat.completions.create(
-                    model="gpt-3.5-turbo",
+                    model="gpt-4-turbo-preview",
                     messages=[
                         {"role": "system", "content": "You are an expert programmer. Generate improved code that fixes execution issues. NEVER use triple backticks or language tags in your response."},
                         {"role": "user", "content": rag_prompt}
@@ -514,7 +517,8 @@ class TodoCreate(BaseModel):
     title: str
     description: Optional[str] = None
     language: Optional[str] = "python"
-    requirements: Optional[List[str]] = []
+    requirements: Optional[List[str]] = []  # Task requirements/features
+    package_requirements: Optional[List[str]] = []  # Actual Python package dependencies
     context: Optional[str] = None
     metadata: Optional[Dict] = None
 
@@ -572,15 +576,18 @@ class PatchRunStatus(BaseModel):
 @app.post("/todos/", response_model=TodoResponse)
 async def create_todo(todo: TodoCreate):
     """Create a new todo item."""
+    logger.debug(f"Creating todo with data: {todo.dict()}")
     todo_item = TodoItem(
         title=todo.title,
         description=todo.description,
         created_at=datetime.now().isoformat(),
         language=todo.language,
         requirements=todo.requirements,
+        package_requirements=todo.package_requirements,
         context=todo.context,
         metadata=todo.metadata
     )
+    logger.debug(f"Created TodoItem: {todo_item.to_dict()}")
     if db_manager.add_todo(todo_item):
         # Get the created todo to return its ID
         todos = db_manager.get_todos()
@@ -625,7 +632,7 @@ async def search_todos(query: str):
 # Code generation endpoints
 @app.post("/generate-code/{todo_id}", response_model=CodeGenerationResponse)
 async def generate_code(todo_id: int):
-    """Generate code based on todo item."""
+    """Generate code based on todo item with autonomous improvements."""
     try:
         # Get the todo item
         todo = db_manager.get_todo_by_id(todo_id)
@@ -637,18 +644,56 @@ async def generate_code(todo_id: int):
             description=todo.description,
             language=todo.language or "python",
             requirements=todo.requirements or [],
+            package_requirements=todo.package_requirements or [],
             context=todo.context
         )
         
+        # Create decision context for autonomous manager
+        context = DecisionContext(
+            code_type=todo.metadata.get('type', 'feature'),
+            complexity=len(todo.requirements) + 1,  # Simple complexity metric
+            risk_level='medium',  # Default risk level
+            previous_attempts=[],
+            system_metrics={
+                'cpu_usage': 50.0,
+                'memory_usage': 70.0,
+                'error_rate': 0.01,
+                'test_coverage': 85.0
+            }
+        )
+        
+        # Generate initial code
+        logger.info("Generating initial code...")
         generated_code = code_generator.generate_code(task)
+        
+        # Improve code using autonomous manager
+        logger.info("Improving code with autonomous manager...")
+        improved_code, success = autonomous_manager.improve_code(
+            generated_code.content,
+            {'purpose': task.description}
+        )
+        
+        if success:
+            generated_code.content = improved_code
+            
+        # Generate tests
+        logger.info("Generating tests...")
+        tests = autonomous_manager.generate_tests(
+            improved_code,
+            {'coverage_target': 90, 'test_type': 'unit'}
+        )
+        if tests:
+            generated_code.tests = "\n".join(tests)
         
         if code_generator.save_code(generated_code):
             # Extract patch ID from file path
-            # The path will be like: src/file.py, and we want the parent directory name
             patch_id = os.path.basename(os.path.dirname(os.path.dirname(generated_code.file_path)))
             
             # Update todo with patch ID
             db_manager.update_todo_patch_id(todo_id, patch_id)
+            
+            # Record metrics
+            autonomous_manager.metrics.record_metric('code_generation', 'success', 1.0)
             
             return CodeGenerationResponse(
                 file_path=generated_code.file_path,
@@ -658,9 +703,14 @@ async def generate_code(todo_id: int):
                 created_at=datetime.now().isoformat(),
                 patch_id=patch_id
             )
+        
+        autonomous_manager.metrics.record_metric('code_generation', 'success', 0.0)
         raise HTTPException(status_code=500, detail="Failed to save generated code")
+        
     except Exception as e:
         logger.error(f"Error generating code: {str(e)}")
+        autonomous_manager.metrics.record_metric('code_generation', 'error', 1.0)
+        autonomous_manager.handle_error(str(e), {'severity': 'high'})
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/run-patch/{todo_id}", response_model=RunPatchResponse)
