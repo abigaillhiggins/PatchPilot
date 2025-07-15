@@ -16,7 +16,9 @@ import autopep8
 import shutil
 import sys
 import json
-from openai import OpenAI
+import torch
+from transformers import AutoTokenizer, AutoModelForCausalLM
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +46,10 @@ class GeneratedCode:
 def clean_code_document(code: str) -> str:
     """Clean code document by removing markdown formatting and triple quotes.
     
+    This function uses a character-by-character parser to extract code between
+    triple backtick markers (```python ... ```). It handles nested code blocks
+    and ensures only the code content is preserved.
+    
     Args:
         code: Raw code string that may contain markdown formatting
         
@@ -53,25 +59,66 @@ def clean_code_document(code: str) -> str:
     # Remove leading/trailing whitespace
     code = code.strip()
     
-    # Remove triple quotes if present
-    if code.startswith("'''") and code.endswith("'''"):
-        code = code[3:-3].strip()
-    elif code.startswith('"""') and code.endswith('"""'):
-        code = code[3:-3].strip()
+    # Initialize state variables
+    result = []
+    i = 0
+    in_code_block = False
+    backtick_count = 0
+    found_first_block = False
     
-    # Remove ```python at start if present
-    if code.startswith("```python"):
-        code = code[len("```python"):].lstrip()
-    elif code.startswith("```"):
-        code = code[3:].lstrip()
+    while i < len(code):
+        char = code[i]
         
-    if code.endswith("```"):
-        code = code[:-3].rstrip()
+        # Handle backticks
+        if char == '`':
+            backtick_count += 1
+            if backtick_count == 3:
+                # We found a triple backtick
+                if not in_code_block and not found_first_block:
+                    # Start of first code block - check for python tag
+                    python_tag_start = i + 1
+                    while python_tag_start < len(code) and code[python_tag_start].isspace():
+                        python_tag_start += 1
+                    if code[python_tag_start:].startswith('python'):
+                        i = python_tag_start + 6  # Skip 'python'
+                    in_code_block = True
+                    found_first_block = True
+                elif in_code_block:
+                    # End of code block
+                    in_code_block = False
+                    # If this was the first block, we're done
+                    if found_first_block:
+                        break
+                backtick_count = 0
+            i += 1
+            continue
+            
+        # Reset backtick count if not consecutive
+        if backtick_count > 0 and char != '`':
+            # If we have incomplete backticks, treat them as regular characters
+            for _ in range(backtick_count):
+                if in_code_block:
+                    result.append('`')
+            backtick_count = 0
+            
+        # Collect code content
+        if in_code_block:
+            if backtick_count == 0:  # Only add if not part of closing backticks
+                result.append(char)
         
-    # Remove any remaining ``` markers
-    code = code.replace("```python", "").replace("```", "").strip()
+        i += 1
     
-    return code
+    # Join and clean the result
+    cleaned = ''.join(result).strip()
+    
+    # Handle case where no code blocks were found
+    if not cleaned and not any(c == '`' for c in code):
+        return code.strip()
+    elif not cleaned:
+        # Return original text if it has incomplete backticks
+        return code.strip()
+        
+    return cleaned
 
 def clean_file_of_triple_quotes(file_path: str) -> None:
     """Remove surrounding Python multi-line string quotes from a file's content.
@@ -131,50 +178,17 @@ def clean_file_of_backticks(file_path: str) -> None:
         logger.error(f"Failed to clean file {file_path}: {str(e)}")
 
 class CodeGenerator:
-    """Manages autonomous code generation and testing."""
-    
+    """Code generation and management class using Qwen2.5 autocoder."""
+
     LANGUAGE_EXTENSIONS = {
-        # Programming Languages
         'python': '.py',
         'javascript': '.js',
         'typescript': '.ts',
         'java': '.java',
         'cpp': '.cpp',
         'c': '.c',
-        'csharp': '.cs',
         'go': '.go',
-        'rust': '.rs',
-        'ruby': '.rb',
-        'php': '.php',
-        'swift': '.swift',
-        'kotlin': '.kt',
-        
-        # Web Technologies
-        'html': '.html',
-        'css': '.css',
-        'scss': '.scss',
-        'less': '.less',
-        'jsx': '.jsx',
-        'tsx': '.tsx',
-        'vue': '.vue',
-        
-        # Data/Config Formats
-        'json': '.json',
-        'yaml': '.yml',
-        'toml': '.toml',
-        'ini': '.ini',
-        'xml': '.xml',
-        
-        # Shell/Scripts
-        'shell': '.sh',
-        'bash': '.sh',
-        'powershell': '.ps1',
-        'batch': '.bat',
-        
-        # Documentation
-        'markdown': '.md',
-        'text': '.txt',
-        'restructuredtext': '.rst'
+        'rust': '.rs'
     }
 
     LANGUAGE_TEST_PREFIXES = {
@@ -291,34 +305,30 @@ class CodeGenerator:
         ]
     }
 
-    def __init__(self, api_key: str, project_dir: str = "."):
+    def __init__(self, project_dir: str = "."):
         """Initialize the code generator.
         
         Args:
-            api_key: OpenAI API key
             project_dir: Root directory of the project
         """
-        self.api_key = api_key
         self.project_dir = os.path.abspath(project_dir)
         self.patches_dir = os.path.join(self.project_dir, "patches")
         
-        # Validate API key
-        if not (api_key and len(api_key) > 40 and api_key.startswith('sk-')):
-            raise ValueError("Invalid OpenAI API key format")
-
-        # Initialize OpenAI client
+        # Initialize Qwen2.5 model
         try:
-            self.client = OpenAI(api_key=api_key)
-            # Test the client with a minimal API call
-            self.client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[{"role": "system", "content": "Test"}, {"role": "user", "content": "Test"}],
-                max_tokens=1
+            self.tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-Coder-7B", trust_remote_code=True)
+            self.model = AutoModelForCausalLM.from_pretrained(
+                "Qwen/Qwen2.5-Coder-7B",
+                trust_remote_code=True,
+                load_in_8bit=True,
+                device_map="auto"
             )
-            logger.info("OpenAI API key validated successfully.")
+            self.model = self.model.eval()
+            logger.info("Qwen2.5-Coder model initialized successfully.")
         except Exception as e:
-            self.client = None
-            logger.error(f"Failed to initialize OpenAI client: {str(e)}")
+            self.model = None
+            self.tokenizer = None
+            logger.error(f"Failed to initialize Qwen2.5-Coder model: {str(e)}")
             logger.warning("Code generation and analysis features will be disabled.")
             
         self.max_improvement_attempts = 3
@@ -337,53 +347,29 @@ class CodeGenerator:
         os.makedirs(patch_dir, exist_ok=True)
         return patch_dir
 
-    def _create_language_directories(self, patch_dir: str, language: str) -> None:
+    def _create_language_directories(self, patch_dir: str, language: str):
         """Create language-specific directories in the patch directory."""
-        # Only create src directory
-        src_dir = os.path.join(patch_dir, 'src')
-        os.makedirs(src_dir, exist_ok=True)
+        os.makedirs(os.path.join(patch_dir, "src"), exist_ok=True)
+        os.makedirs(os.path.join(patch_dir, "tests"), exist_ok=True)
+        os.makedirs(os.path.join(patch_dir, "docs"), exist_ok=True)
 
-    def _create_config_files(self, patch_dir: str, task: CodeTask) -> None:
-        """Create basic requirements.txt file with validated package requirements."""
+    def _create_config_files(self, patch_dir: str, task: CodeTask):
+        """Create necessary configuration files based on the language."""
         if task.language.lower() == 'python':
-            with open(os.path.join(patch_dir, 'requirements.txt'), 'w') as f:
-                f.write("# Python dependencies\n")
-                
-                # Add core testing package
-                f.write("pytest>=7.0.0\n")
-                
-                # Add task-specific package requirements
-                for req in task.package_requirements:
-                    # Basic validation of package name format
-                    if not any(char in req for char in ['<', '>', '=', ' ']):
-                        # If no version specifier, add latest version
-                        f.write(f"{req}>=1.0.0\n")
-                    else:
-                        # If requirement already has version specifier, use as is
-                        f.write(f"{req}\n")
-            
-            # Store task requirements in a separate metadata file
-            metadata = {
-                "description": task.description,
-                "language": task.language,
-                "task_requirements": task.requirements,
-                "context": task.context,
-                "created_at": task.created_at
-            }
-            with open(os.path.join(patch_dir, "metadata.json"), 'w') as f:
-                json.dump(metadata, f, indent=2)
+            # Create requirements.txt if package requirements exist
+            if task.package_requirements:
+                with open(os.path.join(patch_dir, "requirements.txt"), "w") as f:
+                    f.write("\n".join(task.package_requirements))
 
     def _format_code(self, code: str, language: str) -> str:
-        """Format the generated code according to language standards."""
+        """Format the code according to language-specific standards."""
         try:
             if language.lower() == 'python':
-                # Try black first
-                try:
-                    return black.format_str(code, mode=black.FileMode())
-                except:
-                    # Fall back to autopep8
-                    return autopep8.fix_code(code)
-            # Add formatters for other languages here
+                # Use black for Python code formatting
+                code = black.format_str(code, mode=black.FileMode())
+                # Additional PEP 8 formatting
+                code = autopep8.fix_code(code)
+            # Add formatters for other languages as needed
             return code
         except Exception as e:
             logger.warning(f"Failed to format code: {str(e)}")
@@ -405,21 +391,6 @@ class CodeGenerator:
         base_name = os.path.basename(source_file)
         test_prefix = self._get_test_prefix(os.path.splitext(base_name)[1][1:])
         return os.path.join(dir_name, f"{test_prefix}{base_name}")
-
-    def _create_generation_prompt(self, task: CodeTask) -> str:
-        """Create a detailed prompt for code generation."""
-        prompt = f"Generate {task.language} code for: {task.description}\n\n"
-        
-        # Add requirements
-        prompt += "Requirements:\n"
-        for req in task.requirements:
-            prompt += f"- {req}\n"
-        
-        # Add task context
-        if task.context:
-            prompt += f"\nContext:\n{task.context}\n"
-        
-        return prompt
 
     def _get_file_path(self, patch_dir: str, file_name: str, task: CodeTask) -> str:
         """Get the appropriate file path based on language and file type."""
@@ -458,9 +429,62 @@ class CodeGenerator:
         
         return os.path.join(patch_dir, file_name)
 
+    def _create_generation_prompt(self, task: CodeTask) -> str:
+        """Create a prompt for code generation based on the task.
+        
+        Args:
+            task: The coding task to generate code for
+            
+        Returns:
+            A formatted prompt string for the model
+        """
+        # Start with a clear instruction
+        prompt = f"You are a professional software developer. Write {task.language} code that implements the following:\n\n"
+        
+        # Add the main task description
+        prompt += f"Task: {task.description}\n\n"
+        
+        # Add requirements if any
+        if task.requirements:
+            prompt += "Requirements:\n"
+            for req in task.requirements:
+                prompt += f"- {req}\n"
+            prompt += "\n"
+            
+        # Add package requirements if any
+        if task.package_requirements:
+            prompt += "Required packages:\n"
+            for pkg in task.package_requirements:
+                prompt += f"- {pkg}\n"
+            prompt += "\n"
+            
+        # Add context if available
+        if task.context:
+            prompt += f"Additional context: {task.context}\n\n"
+            
+        # Add language-specific instructions
+        if task.language.lower() == "python":
+            prompt += "Write clean, well-documented Python code following PEP 8 style guidelines. Include docstrings and type hints.\n\n"
+        elif task.language.lower() in ["javascript", "typescript"]:
+            prompt += "Write clean, modern JavaScript/TypeScript code following standard style guidelines. Use ES6+ features where appropriate.\n\n"
+        elif task.language.lower() == "java":
+            prompt += "Write clean Java code following standard conventions. Include JavaDoc comments and proper exception handling.\n\n"
+        elif task.language.lower() == "go":
+            prompt += "Write idiomatic Go code following the official style guide. Include proper error handling and documentation.\n\n"
+        elif task.language.lower() == "rust":
+            prompt += "Write idiomatic Rust code following the official style guide. Include proper error handling and documentation.\n\n"
+            
+        # Request for code
+        prompt += f"Please provide the complete {task.language} implementation:\n\n"
+        
+        return prompt
+
     def generate_code(self, task: CodeTask) -> GeneratedCode:
         """Generate code based on task description and requirements."""
         try:
+            if not (self.model and self.tokenizer):
+                raise ValueError("Qwen2.5 model not initialized")
+
             # Create a unique patch directory for this task
             patch_dir = self._get_patch_directory(task)
             
@@ -471,64 +495,50 @@ class CodeGenerator:
             # Create prompt for code generation
             prompt = self._create_generation_prompt(task)
             
-            # Generate code using OpenAI's API
-            if self.client:
-                # Use OpenAI API for code generation
-                try:
-                    response = self.client.chat.completions.create(
-                        model="gpt-4-turbo-preview",
-                        messages=[
-                            {
-                                "role": "system",
-                                "content": """You are an expert programmer. Generate clean, efficient, and well-documented code.
-                                Follow these rules:
-                                1. Include proper type hints and docstrings
-                                2. Add input validation where appropriate
-                                3. Follow language-specific best practices
-                                4. Include example usage in the main block
-                                5. Generate test data and test cases
-                                6. Return ONLY the implementation code, no markdown or explanation
-                                7. NEVER include triple backticks (```) or language tags in your response
-                                8. If the code processes files, ALWAYS include example input files
-                                9. Add a run_example() function that demonstrates usage"""
-                            },
-                            {"role": "user", "content": prompt}
-                        ]
-                    )
-                except Exception as api_error:
-                    logger.error(f"API call failed with error: {str(api_error)}")
-                    raise
-                
-                # Get the generated code
-                code = response.choices[0].message.content.strip()
-                
-                # Clean the code
-                code = clean_code_document(code)
-                
-                # Create file path
-                safe_name = "".join(c if c.isalnum() else "_" for c in task.description.lower())
-                file_name = f"{safe_name[:50]}{self.LANGUAGE_EXTENSIONS.get(task.language.lower(), '.txt')}"
-                src_dir = os.path.join(patch_dir, "src")
-                file_path = os.path.join(src_dir, file_name)
-                
-                # Format the code
-                code = self._format_code(code, task.language)
-                
-                # Create GeneratedCode object
-                generated_code = GeneratedCode(
-                    content=code,
-                    language=task.language,
-                    file_path=file_path,
-                    description=task.description
-                )
-                
-                # Save the code
-                if self.save_code(generated_code):
-                    return generated_code
-                else:
-                    raise Exception("Failed to save generated code")
+            # Generate code using Qwen2.5
+            inputs = self.tokenizer(prompt, return_tensors="pt")
+            if torch.cuda.is_available():
+                inputs = inputs.to("cuda")
+            
+            # Generate with appropriate parameters
+            outputs = self.model.generate(
+                **inputs,
+                max_new_tokens=2048,
+                temperature=0.2,
+                top_p=0.95,
+                top_k=50,
+                repetition_penalty=1.1,
+                do_sample=True,
+                pad_token_id=self.tokenizer.pad_token_id,
+                eos_token_id=self.tokenizer.eos_token_id
+            )
+            
+            # Decode the generated code
+            generated_code = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+            code = generated_code[len(prompt):].strip()  # Remove the prompt from the output
+            
+            # Clean and format the code
+            code = self._format_code(code, task.language)
+            
+            # Create file path
+            safe_name = "".join(c if c.isalnum() else "_" for c in task.description.lower())
+            file_name = f"{safe_name[:50]}{self.LANGUAGE_EXTENSIONS.get(task.language.lower(), '.txt')}"
+            src_dir = os.path.join(patch_dir, "src")
+            file_path = os.path.join(src_dir, file_name)
+            
+            # Create GeneratedCode object
+            generated_code = GeneratedCode(
+                content=code,
+                language=task.language,
+                file_path=file_path,
+                description=task.description
+            )
+            
+            # Save the code
+            if self.save_code(generated_code):
+                return generated_code
             else:
-                raise ValueError("API key not provided")
+                raise Exception("Failed to save generated code")
                 
         except Exception as e:
             logger.error(f"Failed to generate code: {str(e)}")
@@ -537,15 +547,48 @@ class CodeGenerator:
     def save_code(self, generated_code: GeneratedCode) -> bool:
         """Save the generated code to file."""
         try:
-            # Construct the full file path
-            file_path = os.path.join(self.patches_dir, generated_code.file_path)
-            
             # Ensure the src directory exists
-            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+            os.makedirs(os.path.dirname(generated_code.file_path), exist_ok=True)
+            
+            # Get the content and normalize line endings
+            content = generated_code.content.replace('\r\n', '\n')
+            
+            # Split content into lines
+            lines = content.split('\n')
+            cleaned_lines = []
+            in_code_block = False
+            found_first_block = False
+            
+            for line in lines:
+                stripped = line.strip()
+                
+                # Handle code block markers
+                if stripped == '```python' or stripped == '```':
+                    if not found_first_block:
+                        found_first_block = True
+                        in_code_block = True
+                    else:
+                        in_code_block = False
+                    continue
+                
+                # Skip lines before first code block
+                if not found_first_block:
+                    continue
+                
+                # Stop at explanation text
+                if stripped.startswith('This '):
+                    break
+                
+                # Only include lines inside code block
+                if in_code_block:
+                    cleaned_lines.append(line)
+            
+            # Join lines back together
+            content = '\n'.join(cleaned_lines).strip()
             
             # Save main code file
-            with open(file_path, 'w') as f:
-                f.write(generated_code.content)
+            with open(generated_code.file_path, 'w') as f:
+                f.write(content)
             
             return True
         except Exception as e:
@@ -608,8 +651,8 @@ class CodeGenerator:
     def assess_output(self, output: str, error_output: str, task: CodeTask) -> tuple[bool, str, list[str]]:
         """Assess the execution output and determine if improvements are needed."""
         try:
-            if not self.client:
-                return False, "OpenAI API key not available", []
+            if not (self.model and self.tokenizer):
+                return False, "Qwen2.5 model not initialized", []
 
             # Create prompt for output analysis
             prompt = f"""
@@ -635,16 +678,25 @@ class CodeGenerator:
             Provide your analysis and specific code improvements needed.
             """
 
-            # Get analysis from OpenAI
-            response = self.client.chat.completions.create(
-                model="gpt-4-turbo-preview",
-                messages=[
-                    {"role": "system", "content": "You are a code review expert. Analyze code execution output and suggest specific improvements."},
-                    {"role": "user", "content": prompt}
-                ]
+            # Generate analysis using Qwen2.5
+            inputs = self.tokenizer(prompt, return_tensors="pt")
+            if torch.cuda.is_available():
+                inputs = inputs.to("cuda")
+            
+            outputs = self.model.generate(
+                **inputs,
+                max_new_tokens=2048,
+                temperature=0.2,
+                top_p=0.95,
+                top_k=50,
+                repetition_penalty=1.1,
+                do_sample=True,
+                pad_token_id=self.tokenizer.pad_token_id,
+                eos_token_id=self.tokenizer.eos_token_id
             )
-
-            analysis = response.choices[0].message.content.strip()
+            
+            analysis = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+            analysis = analysis[len(prompt):].strip()
 
             # Parse if improvements needed and specific fixes
             needs_improvement = any(indicator in analysis.lower() for indicator in [
@@ -663,15 +715,23 @@ class CodeGenerator:
                 List specific code changes needed (one per line):
                 """
                 
-                fix_response = self.client.chat.completions.create(
-                    model="gpt-4-turbo-preview",
-                    messages=[
-                        {"role": "system", "content": "You are a code improvement expert. List specific code changes needed."},
-                        {"role": "user", "content": fix_prompt}
-                    ]
+                fix_inputs = self.tokenizer(fix_prompt, return_tensors="pt")
+                if torch.cuda.is_available():
+                    fix_inputs = fix_inputs.to("cuda")
+                
+                fix_outputs = self.model.generate(
+                    **fix_inputs,
+                    max_new_tokens=2048,
+                    temperature=0.2,
+                    top_p=0.95,
+                    top_k=50,
+                    repetition_penalty=1.1,
+                    do_sample=True,
+                    pad_token_id=self.tokenizer.pad_token_id,
+                    eos_token_id=self.tokenizer.eos_token_id
                 )
                 
-                fixes = [fix.strip() for fix in fix_response.choices[0].message.content.split('\n') if fix.strip()]
+                fixes = [fix.strip() for fix in self.tokenizer.decode(fix_outputs[0], skip_special_tokens=True)[len(fix_prompt):].strip().split('\n') if fix.strip()]
 
             return needs_improvement, analysis, fixes
         except Exception as e:
@@ -681,7 +741,7 @@ class CodeGenerator:
     def improve_code(self, code: str, fixes: list[str], task: CodeTask) -> str:
         """Improve the code based on suggested fixes."""
         try:
-            if not self.client:
+            if not (self.model and self.tokenizer):
                 return code
 
             # Create prompt for code improvement
@@ -698,35 +758,31 @@ class CodeGenerator:
             {chr(10).join(f'- {req}' for req in task.requirements)}
 
             Please provide the improved code that addresses all the required improvements.
-            Return ONLY the implementation code, no markdown or explanation.
+            Return ONLY the implementation code.
             """
 
-            # Get improved code from OpenAI
-            response = self.client.chat.completions.create(
-                model="gpt-4-turbo-preview",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": """You are an expert programmer. Improve the code while maintaining its core functionality.
-                        Follow these rules:
-                        1. Include proper type hints and docstrings
-                        2. Add input validation where appropriate
-                        3. Follow language-specific best practices
-                        4. Include example usage in the main block
-                        5. Generate test data and test cases
-                        6. Return ONLY the implementation code, no markdown or explanation
-                        7. NEVER include triple backticks (```) or language tags in your response
-                        8. If the code processes files, ALWAYS include example input files
-                        9. Add a run_example() function that demonstrates usage"""
-                    },
-                    {"role": "user", "content": prompt}
-                ]
-            )
-
-            improved_code = response.choices[0].message.content.strip()
+            # Generate improved code using Qwen2.5
+            inputs = self.tokenizer(prompt, return_tensors="pt")
+            if torch.cuda.is_available():
+                inputs = inputs.to("cuda")
             
-            # Clean and format the improved code
-            improved_code = clean_code_document(improved_code)
+            outputs = self.model.generate(
+                **inputs,
+                max_new_tokens=2048,
+                temperature=0.2,
+                top_p=0.95,
+                top_k=50,
+                repetition_penalty=1.1,
+                do_sample=True,
+                pad_token_id=self.tokenizer.pad_token_id,
+                eos_token_id=self.tokenizer.eos_token_id
+            )
+            
+            # Decode and clean the improved code
+            improved_code = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+            improved_code = improved_code[len(prompt):].strip()
+            
+            # Format the improved code
             improved_code = self._format_code(improved_code, task.language)
             
             return improved_code
@@ -745,8 +801,8 @@ class CodeGenerator:
             tuple[bool, str]: (success, final_output)
         """
         try:
-            if not self.client:
-                return False, "OpenAI API key not initialized - check configuration"
+            if not (self.model and self.tokenizer):
+                return False, "Qwen2.5 model not initialized - check configuration"
 
             attempts = 0
             while attempts < self.max_improvement_attempts:

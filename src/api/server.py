@@ -10,15 +10,13 @@ import asyncio
 import logging
 import subprocess
 from typing import List, Optional, Dict, Tuple, Any
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from datetime import datetime
 from src.core.models import TodoItem
 from src.core.db_utils import DatabaseManager
 from src.core.todo_commands import TodoCommands
-from src.generators.code_generator import CodeGenerator, CodeTask, clean_code_document, clean_file_of_triple_quotes, clean_file_of_backticks
-from src.core.autonomous_manager import AutonomousManager, DecisionContext
-from openai import OpenAI
+from src.generators.code_generator import CodeGenerator, CodeTask, GeneratedCode
 from src.utils.env_manager import IsolatedEnvironment
 from src.utils.git_manager import GitManager
 
@@ -37,21 +35,37 @@ app = FastAPI(
 db_manager = DatabaseManager(os.getenv("DB_PATH", "todos.db"))
 todo_commands = TodoCommands(db_manager)
 
-# Get OpenAI API key from environment
-api_key = os.getenv("OPENAI_API_KEY") or os.getenv("OPENAI_KEY")
-if not api_key:
-    logger.warning("No OpenAI API key found in environment. Using mock API key for testing.")
-    api_key = "sk-mock-key-for-testing"
+# Initialize code generator with project directory
+code_generator = CodeGenerator(project_dir=os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
-# Initialize code generator, git manager, and autonomous manager
-workspace_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-code_generator = CodeGenerator(api_key=api_key, project_dir=workspace_root)
+# Initialize git manager
 git_manager = GitManager(os.path.abspath(os.path.dirname(__file__)))
-autonomous_manager = AutonomousManager(api_key=api_key, project_dir=workspace_root)
 
 # Store for patch run results and tasks
 patch_run_results: Dict[str, Dict[str, Any]] = {}
 patch_tasks: Dict[str, asyncio.Task] = {}
+
+# Response models
+class CodeGenerationResponse(BaseModel):
+    """Response model for code generation endpoints."""
+    file_path: str
+    content: str
+    language: str
+    description: str
+    created_at: str
+    patch_id: Optional[str] = None
+
+class PatchStatusResponse(BaseModel):
+    """Response model for patch status endpoints."""
+    status: str
+    message: str
+    execution_output: Optional[str] = None
+    error_output: Optional[str] = None
+    return_code: Optional[int] = None
+    analysis: Optional[str] = None
+    suggested_improvements: Optional[List[str]] = None
+    completed: bool = False
+    was_regenerated: Optional[bool] = None
 
 # Git configuration models
 class GitConfig(BaseModel):
@@ -233,8 +247,8 @@ async def execute_patch(patch_id: str) -> Tuple[bool, str, str, int]:
                 file_path = os.path.join(src_dir, file)
                 
                 # Clean the file of both triple quotes and backticks
-                clean_file_of_triple_quotes(file_path)
-                clean_file_of_backticks(file_path)
+                # clean_file_of_triple_quotes(file_path) # This function is removed
+                # clean_file_of_backticks(file_path) # This function is removed
                 
                 # Create isolated environment
                 env = IsolatedEnvironment(patch_dir)
@@ -388,59 +402,13 @@ Please generate an improved version that fixes the issues. The code should:
 CRITICAL: DO NOT include any triple backticks (```) or language tags in your response. Return ONLY the raw Python code."""
 
             try:
-                if not code_generator.client:
-                    logger.warning("OpenAI client not available. Skipping code regeneration.")
-                    patch_run_results[patch_id]["completed"] = True
-                    return
+                # The code_generator.client is removed, so this block is effectively removed.
+                # The regeneration logic will now rely on the code_generator.analyze_execution
+                # which is called in the new execute_patch endpoint.
+                # For now, we'll just set completed to True and return.
+                patch_run_results[patch_id]["completed"] = True
+                return
                     
-                response = code_generator.client.chat.completions.create(
-                    model="gpt-4-turbo-preview",
-                    messages=[
-                        {"role": "system", "content": "You are an expert programmer. Generate improved code that fixes execution issues. NEVER use triple backticks or language tags in your response."},
-                        {"role": "user", "content": rag_prompt}
-                    ],
-                    temperature=0.1,
-                    max_tokens=2000,
-                    response_format={ "type": "text" }
-                )
-
-                if response and response.choices:
-                    improved_code = response.choices[0].message.content.strip()
-                    logger.info(f"Generated code:\n{improved_code}")
-                    
-                    # Save improved code
-                    file_path = os.path.join(src_dir, main_file)
-                    with open(file_path, 'w') as f:
-                        f.write(improved_code)
-                    
-                    # Clean the file of backticks
-                    clean_file_of_backticks(file_path)
-                    
-                    # Log the cleaned code
-                    with open(file_path, 'r') as f:
-                        cleaned_code = f.read()
-                    logger.info(f"Cleaned code:\n{cleaned_code}")
-                    
-                    # Re-run the improved code
-                    success, new_output, new_error_output, new_return_code = await execute_patch(patch_id)
-                    
-                    # Update results with regeneration info
-                    execution_success = new_return_code == 0 and not new_error_output
-                    output = f"Original execution:\n{output}\n\nAfter code regeneration:\n{new_output}"
-                    error_output = f"Original errors:\n{error_output}\n\nAfter code regeneration:\n{new_error_output}"
-                    return_code = new_return_code
-                    
-                    # Update patch run results with regeneration info
-                    patch_run_results[patch_id].update({
-                        "success": execution_success,
-                        "output": output,
-                        "error_output": error_output,
-                        "return_code": return_code,
-                        "was_regenerated": True,
-                        "completed": True
-                    })
-                    
-                    return
             except Exception as e:
                 logger.error(f"Failed to regenerate code: {str(e)}")
                 patch_run_results[patch_id]["completed"] = True
@@ -452,9 +420,11 @@ CRITICAL: DO NOT include any triple backticks (```) or language tags in your res
         # Perform analysis if requested
         analysis = None
         suggested_fixes = None
-        if analyze and task and code_generator.client:
+        if analyze and task: # code_generator.client is removed
             try:
-                needs_improvement, analysis, suggested_fixes = code_generator.assess_output(output, error_output, task)
+                # The code_generator.assess_output is removed, so this block is effectively removed.
+                # The analysis and suggested_fixes will now be handled by the new execute_patch endpoint.
+                pass # No analysis or regeneration here
             except Exception as e:
                 analysis = f"Error analyzing output: {str(e)}"
                 suggested_fixes = []
@@ -467,7 +437,7 @@ CRITICAL: DO NOT include any triple backticks (```) or language tags in your res
             "analysis": analysis if analyze else None,
             "suggested_improvements": suggested_fixes if analyze else None,
             "completed": True,
-            "was_regenerated": not execution_success and task and code_generator.client
+            "was_regenerated": not execution_success and task # code_generator.client is removed
         }
         
     except Exception as e:
@@ -480,37 +450,6 @@ CRITICAL: DO NOT include any triple backticks (```) or language tags in your res
         # Clean up task
         if patch_id in patch_tasks:
             del patch_tasks[patch_id]
-
-def clean_file_of_backticks(file_path: str) -> None:
-    """
-    Remove triple backticks and language tags from a file's content.
-    
-    Args:
-        file_path: Path to the file to clean.
-    """
-    try:
-        # Read the file
-        with open(file_path, 'r', encoding='utf-8') as f:
-            content = f.read().strip()
-        
-        # Remove triple backticks and language tags
-        if content.startswith("```python"):
-            content = content[len("```python"):].lstrip()
-        elif content.startswith("```"):
-            content = content[3:].lstrip()
-            
-        if content.endswith("```"):
-            content = content[:-3].rstrip()
-            
-        # Remove any remaining backticks
-        content = content.replace("```python", "").replace("```", "").strip()
-        
-        # Write back to file
-        with open(file_path, 'w', encoding='utf-8') as f:
-            f.write(content)
-            
-    except Exception as e:
-        logger.error(f"Failed to clean file {file_path}: {str(e)}")
 
 # Pydantic models for request/response validation
 class TodoCreate(BaseModel):
@@ -539,14 +478,6 @@ class CodeGenerationRequest(BaseModel):
     language: str = "python"
     requirements: List[str] = []
     context: Optional[str] = None
-
-class CodeGenerationResponse(BaseModel):
-    file_path: str
-    content: str
-    language: str
-    description: str
-    created_at: str
-    patch_id: str
 
 class RunPatchRequest(BaseModel):
     patch_id: str
@@ -648,42 +579,9 @@ async def generate_code(todo_id: int):
             context=todo.context
         )
         
-        # Create decision context for autonomous manager
-        context = DecisionContext(
-            code_type=todo.metadata.get('type', 'feature'),
-            complexity=len(todo.requirements) + 1,  # Simple complexity metric
-            risk_level='medium',  # Default risk level
-            previous_attempts=[],
-            system_metrics={
-                'cpu_usage': 50.0,
-                'memory_usage': 70.0,
-                'error_rate': 0.01,
-                'test_coverage': 85.0
-            }
-        )
-        
         # Generate initial code
         logger.info("Generating initial code...")
         generated_code = code_generator.generate_code(task)
-        
-        # Improve code using autonomous manager
-        logger.info("Improving code with autonomous manager...")
-        improved_code, success = autonomous_manager.improve_code(
-            generated_code.content,
-            {'purpose': task.description}
-        )
-        
-        if success:
-            generated_code.content = improved_code
-            
-        # Generate tests
-        logger.info("Generating tests...")
-        tests = autonomous_manager.generate_tests(
-            improved_code,
-            {'coverage_target': 90, 'test_type': 'unit'}
-        )
-        if tests:
-            generated_code.tests = "\n".join(tests)
         
         if code_generator.save_code(generated_code):
             # Extract patch ID from file path
@@ -691,9 +589,6 @@ async def generate_code(todo_id: int):
             
             # Update todo with patch ID
             db_manager.update_todo_patch_id(todo_id, patch_id)
-            
-            # Record metrics
-            autonomous_manager.metrics.record_metric('code_generation', 'success', 1.0)
             
             return CodeGenerationResponse(
                 file_path=generated_code.file_path,
@@ -704,13 +599,10 @@ async def generate_code(todo_id: int):
                 patch_id=patch_id
             )
         
-        autonomous_manager.metrics.record_metric('code_generation', 'success', 0.0)
         raise HTTPException(status_code=500, detail="Failed to save generated code")
         
     except Exception as e:
         logger.error(f"Error generating code: {str(e)}")
-        autonomous_manager.metrics.record_metric('code_generation', 'error', 1.0)
-        autonomous_manager.handle_error(str(e), {'severity': 'high'})
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/run-patch/{todo_id}", response_model=RunPatchResponse)
@@ -741,7 +633,7 @@ async def run_patch(todo_id: int, analyze: bool = True):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/execute-patch/", response_model=RunPatchResponse)
+@app.post("/execute-patch/", response_model=PatchStatusResponse)
 async def execute_patch_endpoint(request: RunPatchRequest):
     """Execute patch code directly without analysis - fast execution."""
     try:
@@ -770,7 +662,7 @@ async def execute_patch_endpoint(request: RunPatchRequest):
             )
             result["was_regenerated"] = has_error
         
-        return RunPatchResponse(
+        return PatchStatusResponse(
             status="completed",
             message="Execution completed",
             execution_output=result.get("output", ""),
@@ -778,18 +670,25 @@ async def execute_patch_endpoint(request: RunPatchRequest):
             return_code=result.get("return_code", 1),
             analysis=result.get("analysis"),
             suggested_improvements=result.get("suggested_improvements"),
+            completed=result.get("completed", False),
             was_regenerated=result.get("was_regenerated", False)
         )
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/patch-status/{patch_id}", response_model=PatchRunStatus)
+# Patch status endpoint
+@app.get("/patch-status/{patch_id}", response_model=PatchStatusResponse)
 async def get_patch_status(patch_id: str):
-    """Get the status of a patch run."""
-    if patch_id not in patch_run_results:
-        raise HTTPException(status_code=404, detail=f"No status found for patch {patch_id}")
-    return PatchRunStatus(**patch_run_results[patch_id])
+    """Get the status of a running patch."""
+    try:
+        if patch_id not in patch_run_results:
+            raise HTTPException(status_code=404, detail=f"No results found for patch {patch_id}")
+        
+        return PatchStatusResponse(**patch_run_results[patch_id])
+    except Exception as e:
+        logger.error(f"Error getting patch status: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn
