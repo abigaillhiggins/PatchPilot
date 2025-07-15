@@ -46,18 +46,18 @@ def setup_and_teardown():
     # Setup: Use in-memory SQLite database for testing
     os.environ["DB_PATH"] = ":memory:"
     os.environ["PROJECT_DIR"] = "test_project"
-    os.environ["OPENAI_KEY"] = "test_key"
+    os.environ["GROQ_API_KEY"] = "test_key"
     
     # Create test project directory
     os.makedirs("test_project", exist_ok=True)
     
-    # Mock OpenAI client
-    with patch('openai.OpenAI') as mock_openai:
+    # Mock Groq client
+    with patch('groq.Groq') as mock_groq:
         mock_client = MagicMock()
         mock_chat = MagicMock()
         mock_chat.completions.create.return_value = MOCK_OPENAI_RESPONSE
         mock_client.chat = mock_chat
-        mock_openai.return_value = mock_client
+        mock_groq.return_value = mock_client
         
         yield
     

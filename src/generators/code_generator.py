@@ -1,6 +1,6 @@
 """
 Autonomous code generation module for PatchPilot.
-This module provides functionality to generate, test, and manage code autonomously.
+This module provides functionality to generate, test, and manage code autonomously using Groq API for Qwen AutoCoder 2.5.
 """
 
 import os
@@ -16,8 +16,7 @@ import autopep8
 import shutil
 import sys
 import json
-import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM
+import groq
 import re
 
 logger = logging.getLogger(__name__)
@@ -314,21 +313,17 @@ class CodeGenerator:
         self.project_dir = os.path.abspath(project_dir)
         self.patches_dir = os.path.join(self.project_dir, "patches")
         
-        # Initialize Qwen2.5 model
+        # Initialize Groq API for Qwen2.5
         try:
-            self.tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-Coder-7B", trust_remote_code=True)
-            self.model = AutoModelForCausalLM.from_pretrained(
-                "Qwen/Qwen2.5-Coder-7B",
-                trust_remote_code=True,
-                load_in_8bit=True,
-                device_map="auto"
-            )
-            self.model = self.model.eval()
-            logger.info("Qwen2.5-Coder model initialized successfully.")
+            api_key = os.getenv('GROQ_API_KEY')
+            if not api_key:
+                raise ValueError("GROQ_API_KEY environment variable not set")
+            
+            self.client = groq.Groq(api_key=api_key)
+            logger.info("Groq API initialized successfully for Qwen2.5-Coder.")
         except Exception as e:
-            self.model = None
-            self.tokenizer = None
-            logger.error(f"Failed to initialize Qwen2.5-Coder model: {str(e)}")
+            self.client = None
+            logger.error(f"Failed to initialize Groq API for Qwen2.5-Coder: {str(e)}")
             logger.warning("Code generation and analysis features will be disabled.")
             
         self.max_improvement_attempts = 3
@@ -464,7 +459,14 @@ class CodeGenerator:
             
         # Add language-specific instructions
         if task.language.lower() == "python":
-            prompt += "Write clean, well-documented Python code following PEP 8 style guidelines. Include docstrings and type hints.\n\n"
+            prompt += (
+                "Write clean, well-documented Python code following PEP 8 style guidelines. "
+                "Include docstrings and type hints.\n"
+                "ALSO, generate a requirements.txt file listing ALL external dependencies (such as requests, numpy, etc) needed to run the code. "
+                "If no external dependencies are needed, generate an empty requirements.txt file. "
+                "Output both the code and the requirements.txt file, clearly separated in markdown code blocks.\n"
+                "IMPORTANT: When creating multiple files, use file paths in code block headers like ```main.py, ```requirements.txt, ```utils.py, etc.\n\n"
+            )
         elif task.language.lower() in ["javascript", "typescript"]:
             prompt += "Write clean, modern JavaScript/TypeScript code following standard style guidelines. Use ES6+ features where appropriate.\n\n"
         elif task.language.lower() == "java":
@@ -479,11 +481,38 @@ class CodeGenerator:
         
         return prompt
 
+    def _create_simplified_prompt(self, task: CodeTask) -> str:
+        """Create a simplified prompt for complex tasks that failed initial generation."""
+        # Extract the core requirement from the task description
+        description = task.description
+        
+        # For very long descriptions, extract the main requirement
+        if len(description) > 300:
+            # Try to find the main action (usually after "Create" or "Build")
+            import re
+            match = re.search(r'(?:Create|Build|Make|Develop)\s+([^,]+)', description, re.IGNORECASE)
+            if match:
+                core_requirement = match.group(1).strip()
+            else:
+                # Fallback: take first sentence
+                core_requirement = description.split('.')[0]
+        else:
+            core_requirement = description
+        
+        simplified_prompt = f"""Create a Python implementation for: {core_requirement}
+
+Focus on the core functionality. Generate clean, well-documented code with proper error handling.
+Include a requirements.txt file if external dependencies are needed.
+
+Output the code in markdown code blocks."""
+        
+        return simplified_prompt
+
     def generate_code(self, task: CodeTask) -> GeneratedCode:
         """Generate code based on task description and requirements."""
         try:
-            if not (self.model and self.tokenizer):
-                raise ValueError("Qwen2.5 model not initialized")
+            if not self.client:
+                raise ValueError("Groq API client not initialized")
 
             # Create a unique patch directory for this task
             patch_dir = self._get_patch_directory(task)
@@ -495,100 +524,268 @@ class CodeGenerator:
             # Create prompt for code generation
             prompt = self._create_generation_prompt(task)
             
-            # Generate code using Qwen2.5
-            inputs = self.tokenizer(prompt, return_tensors="pt")
-            if torch.cuda.is_available():
-                inputs = inputs.to("cuda")
-            
-            # Generate with appropriate parameters
-            outputs = self.model.generate(
-                **inputs,
-                max_new_tokens=2048,
+            # Generate code using Groq API
+            response = self.client.chat.completions.create(
+                model="qwen/qwen3-32b",
+                messages=[
+                    {"role": "system", "content": "You are an expert programmer. Generate clean, efficient, and well-documented code."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=8192,  # Increased from 2048 to handle complex projects
                 temperature=0.2,
-                top_p=0.95,
-                top_k=50,
-                repetition_penalty=1.1,
-                do_sample=True,
-                pad_token_id=self.tokenizer.pad_token_id,
-                eos_token_id=self.tokenizer.eos_token_id
+                top_p=0.95
             )
             
             # Decode the generated code
-            generated_code = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
-            code = generated_code[len(prompt):].strip()  # Remove the prompt from the output
+            raw_response = response.choices[0].message.content
+            raw_response = raw_response.strip()  # Remove the prompt from the output
             
-            # Clean and format the code
-            code = self._format_code(code, task.language)
+            # Log token usage for monitoring
+            if hasattr(response, 'usage'):
+                logger.info(f"Token usage - Input: {response.usage.prompt_tokens}, Output: {response.usage.completion_tokens}, Total: {response.usage.total_tokens}")
+            else:
+                logger.info(f"Response length: {len(raw_response)} characters")
             
-            # Create file path
-            safe_name = "".join(c if c.isalnum() else "_" for c in task.description.lower())
-            file_name = f"{safe_name[:50]}{self.LANGUAGE_EXTENSIONS.get(task.language.lower(), '.txt')}"
+            # Validate response completeness
+            if len(raw_response) < 50:  # Very short responses are likely truncated
+                logger.warning(f"Response seems truncated (length: {len(raw_response)})")
+                # Retry with simplified prompt for complex tasks
+                if len(task.description) > 200:
+                    logger.info("Retrying with simplified prompt")
+                    simplified_prompt = self._create_simplified_prompt(task)
+                    response = self.client.chat.completions.create(
+                        model="qwen/qwen3-32b",
+                        messages=[
+                            {"role": "system", "content": "You are an expert programmer. Generate clean, efficient, and well-documented code."},
+                            {"role": "user", "content": simplified_prompt}
+                        ],
+                        max_tokens=8192,
+                        temperature=0.2,
+                        top_p=0.95
+                    )
+                    raw_response = response.choices[0].message.content.strip()
+            
+            # Extract multiple files from the response
+            extracted_files = self._extract_files_from_response(raw_response)
+            
+            if not extracted_files:
+                raise Exception("No code files could be extracted from the response")
+            
+            # Get the main code file (prioritize main.py, then any .py file, then first file)
+            main_code = None
+            main_file_name = None
+            
+            if 'main.py' in extracted_files:
+                main_code = extracted_files['main.py']
+                main_file_name = 'main.py'
+            else:
+                # Find any Python file
+                for file_name, content in extracted_files.items():
+                    if file_name.endswith('.py'):
+                        main_code = content
+                        main_file_name = file_name
+                        break
+                
+                # If no Python file found, use the first file
+                if not main_code and extracted_files:
+                    main_file_name = list(extracted_files.keys())[0]
+                    main_code = extracted_files[main_file_name]
+            
+            # Clean and format the main code
+            main_code = self._format_code(main_code, task.language)
+            
+            # Create file path for main code
             src_dir = os.path.join(patch_dir, "src")
-            file_path = os.path.join(src_dir, file_name)
+            file_path = os.path.join(src_dir, main_file_name)
             
             # Create GeneratedCode object
             generated_code = GeneratedCode(
-                content=code,
+                content=main_code,
                 language=task.language,
                 file_path=file_path,
                 description=task.description
             )
             
-            # Save the code
-            if self.save_code(generated_code):
+            # Save all files
+            if self.save_multiple_files(extracted_files, patch_dir):
                 return generated_code
             else:
-                raise Exception("Failed to save generated code")
+                raise Exception("Failed to save generated files")
                 
         except Exception as e:
             logger.error(f"Failed to generate code: {str(e)}")
             raise
 
+    def _extract_files_from_response(self, content: str) -> dict:
+        """Extract multiple files from Groq API response.
+        
+        Returns:
+            dict: Dictionary with file names as keys and file contents as values
+        """
+        import re
+        
+        # Remove <think> tags and their content
+        content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL)
+        content = re.sub(r'<think>', '', content)
+        content = re.sub(r'</think>', '', content)
+        
+        files = {}
+        
+        # Find all code blocks with file paths or language tags
+        # This regex matches both ```filename.ext and ```language patterns
+        code_blocks = re.findall(r'```([^\n]+)\n(.*?)```', content, re.DOTALL)
+        
+        for block in code_blocks:
+            header, code_content = block
+            code_content = code_content.strip()
+            
+            # Parse the header to determine file name and language
+            header_parts = header.strip().split('/')
+            
+            if len(header_parts) > 1:
+                # This is a file path like "backend/main.py" or "frontend/app.js"
+                file_name = header_parts[-1]  # Get the filename part
+                files[file_name] = code_content
+            else:
+                # This is a language tag like "python" or "javascript"
+                language = header_parts[0].lower()
+                
+                # Determine file name based on language and content
+                if language == 'txt' or 'requirements' in code_content.lower():
+                    # This is likely a requirements.txt file
+                    files['requirements.txt'] = code_content
+                elif language == 'python' or language == 'py':
+                    # This is Python code - use as main file
+                    files['main.py'] = code_content
+                elif language == 'javascript' or language == 'js':
+                    files['main.js'] = code_content
+                elif language == 'typescript' or language == 'ts':
+                    files['main.ts'] = code_content
+                elif language == 'html':
+                    files['index.html'] = code_content
+                elif language == 'css':
+                    files['style.css'] = code_content
+                elif language == 'json':
+                    files['config.json'] = code_content
+                elif language:
+                    # Other language files
+                    files[f'main.{language}'] = code_content
+                else:
+                    # No language specified, assume it's the main code file
+                    if 'requirements.txt' not in files:
+                        files['main.py'] = code_content
+        
+        # If no files were extracted, try to extract just the main code
+        if not files:
+            # Fallback to old method for backward compatibility
+            main_code = self._extract_main_code_only(content)
+            if main_code:
+                files['main.py'] = main_code
+        
+        return files
+    
+    def _extract_main_code_only(self, content: str) -> str:
+        """Extract only the main code (fallback method)."""
+        import re
+        
+        lines = content.split('\n')
+        cleaned_lines = []
+        in_code_block = False
+        found_first_block = False
+        
+        for line in lines:
+            stripped = line.strip()
+            
+            # Handle code block markers
+            if stripped.startswith('```'):
+                if not found_first_block:
+                    found_first_block = True
+                    in_code_block = True
+                else:
+                    in_code_block = False
+                continue
+            
+            # Skip lines before first code block
+            if not found_first_block:
+                continue
+            
+            # Stop at explanation text or key features
+            if (stripped.startswith('### Key Features:') or 
+                stripped.startswith('### Usage Instructions:') or
+                stripped.startswith('This ') or
+                stripped.startswith('The script uses')):
+                break
+            
+            # Only include lines inside code block
+            if in_code_block:
+                cleaned_lines.append(line)
+        
+        # Join lines back together and clean up
+        content = '\n'.join(cleaned_lines).strip()
+        content = re.sub(r'```\s*$', '', content)
+        
+        return content
+
+    def save_multiple_files(self, files: dict, patch_dir: str) -> bool:
+        """Save multiple files to the patch directory.
+        
+        Args:
+            files: Dictionary with file names as keys and file contents as values
+            patch_dir: Directory to save files in
+            
+        Returns:
+            bool: True if all files were saved successfully
+        """
+        try:
+            for file_name, content in files.items():
+                # Determine the appropriate directory for each file type
+                if file_name == 'requirements.txt':
+                    # Save requirements.txt in the patch root directory
+                    file_path = os.path.join(patch_dir, file_name)
+                elif file_name.endswith('.py'):
+                    # Save Python files in the src directory
+                    src_dir = os.path.join(patch_dir, "src")
+                    os.makedirs(src_dir, exist_ok=True)
+                    file_path = os.path.join(src_dir, file_name)
+                elif file_name.endswith('.js') or file_name.endswith('.ts'):
+                    # Save JavaScript/TypeScript files in the src directory
+                    src_dir = os.path.join(patch_dir, "src")
+                    os.makedirs(src_dir, exist_ok=True)
+                    file_path = os.path.join(src_dir, file_name)
+                elif file_name.endswith('.json'):
+                    # Save JSON files in the config directory
+                    config_dir = os.path.join(patch_dir, "config")
+                    os.makedirs(config_dir, exist_ok=True)
+                    file_path = os.path.join(config_dir, file_name)
+                else:
+                    # Save other files in the src directory
+                    src_dir = os.path.join(patch_dir, "src")
+                    os.makedirs(src_dir, exist_ok=True)
+                    file_path = os.path.join(src_dir, file_name)
+                
+                # Ensure the directory exists
+                os.makedirs(os.path.dirname(file_path), exist_ok=True)
+                
+                # Save the file
+                with open(file_path, 'w') as f:
+                    f.write(content)
+                
+                logger.info(f"Saved file: {file_path}")
+            
+            return True
+        except Exception as e:
+            logger.error(f"Error saving multiple files: {str(e)}")
+            return False
+
     def save_code(self, generated_code: GeneratedCode) -> bool:
-        """Save the generated code to file."""
+        """Save the generated code to file (legacy method)."""
         try:
             # Ensure the src directory exists
             os.makedirs(os.path.dirname(generated_code.file_path), exist_ok=True)
             
-            # Get the content and normalize line endings
-            content = generated_code.content.replace('\r\n', '\n')
-            
-            # Split content into lines
-            lines = content.split('\n')
-            cleaned_lines = []
-            in_code_block = False
-            found_first_block = False
-            
-            for line in lines:
-                stripped = line.strip()
-                
-                # Handle code block markers
-                if stripped == '```python' or stripped == '```':
-                    if not found_first_block:
-                        found_first_block = True
-                        in_code_block = True
-                    else:
-                        in_code_block = False
-                    continue
-                
-                # Skip lines before first code block
-                if not found_first_block:
-                    continue
-                
-                # Stop at explanation text
-                if stripped.startswith('This '):
-                    break
-                
-                # Only include lines inside code block
-                if in_code_block:
-                    cleaned_lines.append(line)
-            
-            # Join lines back together
-            content = '\n'.join(cleaned_lines).strip()
-            
-            # Save main code file
+            # Save main code file (content is already cleaned in generate_code)
             with open(generated_code.file_path, 'w') as f:
-                f.write(content)
+                f.write(generated_code.content)
             
             return True
         except Exception as e:
@@ -651,8 +848,8 @@ class CodeGenerator:
     def assess_output(self, output: str, error_output: str, task: CodeTask) -> tuple[bool, str, list[str]]:
         """Assess the execution output and determine if improvements are needed."""
         try:
-            if not (self.model and self.tokenizer):
-                return False, "Qwen2.5 model not initialized", []
+            if not self.client:
+                return False, "Groq API client not initialized", []
 
             # Create prompt for output analysis
             prompt = f"""
@@ -678,25 +875,20 @@ class CodeGenerator:
             Provide your analysis and specific code improvements needed.
             """
 
-            # Generate analysis using Qwen2.5
-            inputs = self.tokenizer(prompt, return_tensors="pt")
-            if torch.cuda.is_available():
-                inputs = inputs.to("cuda")
-            
-            outputs = self.model.generate(
-                **inputs,
-                max_new_tokens=2048,
+            # Generate analysis using Groq API
+            response = self.client.chat.completions.create(
+                model="qwen/qwen3-32b",
+                messages=[
+                    {"role": "system", "content": "You are an expert code reviewer. Analyze code execution output and provide specific improvement suggestions."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=2048,
                 temperature=0.2,
-                top_p=0.95,
-                top_k=50,
-                repetition_penalty=1.1,
-                do_sample=True,
-                pad_token_id=self.tokenizer.pad_token_id,
-                eos_token_id=self.tokenizer.eos_token_id
+                top_p=0.95
             )
             
-            analysis = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
-            analysis = analysis[len(prompt):].strip()
+            analysis = response.choices[0].message.content
+            analysis = analysis.strip()
 
             # Parse if improvements needed and specific fixes
             needs_improvement = any(indicator in analysis.lower() for indicator in [
@@ -707,7 +899,7 @@ class CodeGenerator:
             # Extract specific fixes if improvements needed
             fixes = []
             if needs_improvement:
-                # Get specific fixes from OpenAI
+                # Get specific fixes from Groq API
                 fix_prompt = f"""
                 Based on this analysis:
                 {analysis}
@@ -715,23 +907,18 @@ class CodeGenerator:
                 List specific code changes needed (one per line):
                 """
                 
-                fix_inputs = self.tokenizer(fix_prompt, return_tensors="pt")
-                if torch.cuda.is_available():
-                    fix_inputs = fix_inputs.to("cuda")
-                
-                fix_outputs = self.model.generate(
-                    **fix_inputs,
-                    max_new_tokens=2048,
+                response = self.client.chat.completions.create(
+                    model="qwen/qwen3-32b",
+                    messages=[
+                        {"role": "system", "content": "You are an expert code reviewer. Provide specific, actionable code improvement suggestions."},
+                        {"role": "user", "content": fix_prompt}
+                    ],
+                    max_tokens=2048,
                     temperature=0.2,
-                    top_p=0.95,
-                    top_k=50,
-                    repetition_penalty=1.1,
-                    do_sample=True,
-                    pad_token_id=self.tokenizer.pad_token_id,
-                    eos_token_id=self.tokenizer.eos_token_id
+                    top_p=0.95
                 )
                 
-                fixes = [fix.strip() for fix in self.tokenizer.decode(fix_outputs[0], skip_special_tokens=True)[len(fix_prompt):].strip().split('\n') if fix.strip()]
+                fixes = [fix.strip() for fix in response.choices[0].message.content.strip().split('\n') if fix.strip()]
 
             return needs_improvement, analysis, fixes
         except Exception as e:
@@ -741,7 +928,7 @@ class CodeGenerator:
     def improve_code(self, code: str, fixes: list[str], task: CodeTask) -> str:
         """Improve the code based on suggested fixes."""
         try:
-            if not (self.model and self.tokenizer):
+            if not self.client:
                 return code
 
             # Create prompt for code improvement
@@ -761,26 +948,21 @@ class CodeGenerator:
             Return ONLY the implementation code.
             """
 
-            # Generate improved code using Qwen2.5
-            inputs = self.tokenizer(prompt, return_tensors="pt")
-            if torch.cuda.is_available():
-                inputs = inputs.to("cuda")
-            
-            outputs = self.model.generate(
-                **inputs,
-                max_new_tokens=2048,
+            # Generate improved code using Groq API
+            response = self.client.chat.completions.create(
+                model="qwen/qwen3-32b",
+                messages=[
+                    {"role": "system", "content": "You are an expert programmer. Improve the given code based on the specified requirements."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=2048,
                 temperature=0.2,
-                top_p=0.95,
-                top_k=50,
-                repetition_penalty=1.1,
-                do_sample=True,
-                pad_token_id=self.tokenizer.pad_token_id,
-                eos_token_id=self.tokenizer.eos_token_id
+                top_p=0.95
             )
             
             # Decode and clean the improved code
-            improved_code = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
-            improved_code = improved_code[len(prompt):].strip()
+            improved_code = response.choices[0].message.content
+            improved_code = improved_code.strip()
             
             # Format the improved code
             improved_code = self._format_code(improved_code, task.language)
@@ -801,8 +983,8 @@ class CodeGenerator:
             tuple[bool, str]: (success, final_output)
         """
         try:
-            if not (self.model and self.tokenizer):
-                return False, "Qwen2.5 model not initialized - check configuration"
+            if not self.client:
+                return False, "Groq API client not initialized - check configuration"
 
             attempts = 0
             while attempts < self.max_improvement_attempts:
@@ -824,7 +1006,7 @@ class CodeGenerator:
                     needs_improvement, analysis, fixes = self.assess_output(output, error_output, task)
                 except Exception as e:
                     if "invalid_api_key" in str(e):
-                        return False, "Invalid OpenAI API key - please check your configuration"
+                        return False, "Invalid Groq API key - please check your configuration"
                     return False, f"Error assessing code: {str(e)}"
 
                 if not needs_improvement:
@@ -836,7 +1018,7 @@ class CodeGenerator:
                         return False, f"Failed to improve code after attempt {attempts + 1}"
                 except Exception as e:
                     if "invalid_api_key" in str(e):
-                        return False, "Invalid OpenAI API key - please check your configuration"
+                        return False, "Invalid Groq API key - please check your configuration"
                     return False, f"Error improving code: {str(e)}"
 
                 attempts += 1

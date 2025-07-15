@@ -23,7 +23,7 @@ pip install -r requirements.txt
 
 4. Set up environment variables:
 ```bash
-export OPENAI_API_KEY="your-api-key"  # Required for code generation
+export GROQ_API_KEY="your-groq-api-key"  # Required for code generation
 export DB_PATH="todos.db"  # Optional, defaults to todos.db
 ```
 

@@ -16,7 +16,7 @@ A FastAPI server that integrates todo management with autonomous code generation
 
 ## Environment Variables
 
-- `OPENAI_KEY`: Your OpenAI API key
+- `GROQ_API_KEY`: Your Groq API key
 - `DB_PATH`: Path to SQLite database (default: /app/data/todos.db)
 - `PROJECT_DIR`: Directory for generated code (default: /app/project)
 
@@ -31,7 +31,7 @@ A FastAPI server that integrates todo management with autonomous code generation
    ```bash
    docker run -d \
      -p 8000:8000 \
-     -e OPENAI_KEY=your_api_key \
+     -e GROQ_API_KEY=your_groq_api_key \
      -v $(pwd)/data:/app/data \
      -v $(pwd)/project:/app/project \
      patchpilot
@@ -88,7 +88,7 @@ To run the server locally without Docker:
 
 2. Set environment variables:
    ```bash
-   export OPENAI_KEY=your_api_key
+   export GROQ_API_KEY=your_groq_api_key
    export DB_PATH=todos.db
    export PROJECT_DIR=project
    ```

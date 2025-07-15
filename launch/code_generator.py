@@ -9,7 +9,7 @@ import subprocess
 from typing import List, Dict, Optional, Tuple, Any
 from dataclasses import dataclass
 from datetime import datetime
-from openai import OpenAI
+import groq
 import ast
 import black
 import autopep8
@@ -297,42 +297,27 @@ class CodeGenerator:
         self.max_improvement_attempts = 3  # Maximum number of recursive improvement attempts
 
         # Validate API key
-        if not (api_key and len(api_key) > 40 and api_key.startswith('sk-')):
-            raise ValueError("Invalid OpenAI API key format")
+        if not (api_key and len(api_key) > 40 and api_key.startswith('gsk_')):
+            raise ValueError("Invalid Groq API key format")
 
-        # Validate and initialize OpenAI client
+        # Validate and initialize Groq client
         if not api_key or api_key == "dummy_key_for_testing":
             self.client = None
             logger.warning("No valid API key provided. Code generation and analysis features will be disabled.")
             return
 
-        # Import validation function
         try:
-            from test_api_key import validate_api_key_format
-            is_valid, error = validate_api_key_format(api_key)
-            if not is_valid:
-                self.client = None
-                logger.warning(f"Invalid OpenAI API key format: {error}. Code generation will be disabled.")
-                return
-        except ImportError:
-            # Fallback to basic validation if test_api_key module not available
-            if not (api_key and len(api_key) > 40 and (api_key.startswith('sk-') or api_key.startswith('sk-proj-'))):
-                self.client = None
-                logger.warning("Invalid OpenAI API key format. Code generation will be disabled.")
-                return
-
-        try:
-            self.client = OpenAI(api_key=api_key)
+            self.client = groq.Groq(api_key=api_key)
             # Test the client with a minimal API call
             self.client.chat.completions.create(
-                model="gpt-4-turbo-preview",
+                model="qwen2.5-coder-7b",
                 messages=[{"role": "system", "content": "Test"}, {"role": "user", "content": "Test"}],
                 max_tokens=1
             )
-            logger.info("OpenAI API key validated successfully.")
+            logger.info("Groq API key validated successfully.")
         except Exception as e:
             self.client = None
-            logger.error(f"Failed to initialize OpenAI client: {str(e)}")
+            logger.error(f"Failed to initialize Groq client: {str(e)}")
             logger.warning("Code generation and analysis features will be disabled.")
 
     def _ensure_directories_exist(self):
@@ -470,9 +455,9 @@ class CodeGenerator:
             
             # Generate code
             if self.client:
-                # Use GPT-3.5 Turbo for code generation
+                # Use Qwen3-32B for code generation
                 response = self.client.chat.completions.create(
-                    model="gpt-3.5-turbo",
+                    model="qwen/qwen3-32b",
                     messages=[
                         {
                             "role": "system",
@@ -492,10 +477,7 @@ class CodeGenerator:
                     ],
                     temperature=0.1,  # Lower temperature for more focused generation
                     max_tokens=2000,
-                    top_p=0.9,
-                    frequency_penalty=0.0,
-                    presence_penalty=0.0,
-                    response_format={ "type": "text" }
+                    top_p=0.9
                 )
                 
                 # Get the generated code
@@ -540,14 +522,13 @@ class CodeGenerator:
                         6. Keep it small (3-5 records)"""
                         
                         test_data_response = self.client.chat.completions.create(
-                            model="gpt-3.5-turbo",
+                            model="qwen/qwen3-32b",
                             messages=[
                                 {"role": "system", "content": "You are a data generation expert. Generate realistic test data."},
                                 {"role": "user", "content": test_data_prompt}
                             ],
                             temperature=0.1,
-                            max_tokens=500,
-                            response_format={ "type": "text" }
+                            max_tokens=500
                         )
                         
                         if test_data_response and test_data_response.choices:
@@ -566,7 +547,7 @@ class CodeGenerator:
                 else:
                     raise Exception("No code generated from the API")
             else:
-                raise ValueError("OpenAI client is not configured")
+                raise ValueError("Groq client is not configured")
         except Exception as e:
             logger.error(f"Error generating code: {str(e)}")
             raise
@@ -678,9 +659,9 @@ class CodeGenerator:
             Provide your analysis and specific code improvements needed.
             """
 
-            # Get analysis from OpenAI
+            # Get analysis from Groq API
             response = self.client.chat.completions.create(
-                model="gpt-4-turbo-preview",
+                model="qwen2.5-coder-7b",
                 messages=[
                     {"role": "system", "content": "You are a code review expert. Analyze code execution output and suggest specific improvements."},
                     {"role": "user", "content": prompt}
@@ -698,7 +679,7 @@ class CodeGenerator:
             # Extract specific fixes if improvements needed
             fixes = []
             if needs_improvement:
-                # Get specific fixes from OpenAI
+                # Get specific fixes from Groq API
                 fix_prompt = f"""
                 Based on this analysis:
                 {analysis}
@@ -707,7 +688,7 @@ class CodeGenerator:
                 """
                 
                 fix_response = self.client.chat.completions.create(
-                    model="gpt-4-turbo-preview",
+                    model="qwen2.5-coder-7b",
                     messages=[
                         {"role": "system", "content": "You are a code improvement expert. List specific code changes needed."},
                         {"role": "user", "content": fix_prompt}
@@ -772,9 +753,9 @@ class CodeGenerator:
             Please provide the complete improved code that fixes these issues while maintaining the original functionality.
             """
 
-            # Get improved code from OpenAI
+            # Get improved code from Groq API
             response = self.client.chat.completions.create(
-                model="gpt-4-turbo-preview",
+                model="qwen2.5-coder-7b",
                 messages=[
                     {"role": "system", "content": "You are a code improvement expert. Provide improved code that fixes identified issues."},
                     {"role": "user", "content": prompt}
@@ -825,7 +806,7 @@ class CodeGenerator:
         """
         try:
             if not self.client:
-                return False, "OpenAI client not initialized - check API key"
+                return False, "Groq client not initialized - check API key"
 
             attempts = 0
             while attempts < self.max_improvement_attempts:
@@ -847,7 +828,7 @@ class CodeGenerator:
                     needs_improvement, analysis, fixes = self.assess_output(output, error_output, task)
                 except Exception as e:
                     if "invalid_api_key" in str(e):
-                        return False, "Invalid OpenAI API key - please check your configuration"
+                        return False, "Invalid Groq API key - please check your configuration"
                     return False, f"Error assessing code: {str(e)}"
 
                 if not needs_improvement:
@@ -859,7 +840,7 @@ class CodeGenerator:
                         return False, f"Failed to improve code after attempt {attempts + 1}"
                 except Exception as e:
                     if "invalid_api_key" in str(e):
-                        return False, "Invalid OpenAI API key - please check your configuration"
+                        return False, "Invalid Groq API key - please check your configuration"
                     return False, f"Error improving code: {str(e)}"
 
                 attempts += 1

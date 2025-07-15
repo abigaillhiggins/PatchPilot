@@ -26,10 +26,10 @@ def parse_args():
 def main():
     args = parse_args()
     
-    # Check for OpenAI API key
-    api_key = os.getenv("OPENAI_KEY")
+    # Check for Groq API key
+    api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
-        print("Error: OPENAI_KEY environment variable not set")
+        print("Error: GROQ_API_KEY environment variable not set")
         sys.exit(1)
     
     # Create task from arguments

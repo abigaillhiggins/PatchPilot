@@ -1,11 +1,11 @@
-from openai import OpenAI
+import groq
 import os
 import re
 from typing import Tuple
 import sys
 
 def validate_api_key_format(key: str) -> tuple[bool, str]:
-    """Validate the format of an OpenAI API key.
+    """Validate the format of a Groq API key.
     
     Args:
         key: The API key to validate
@@ -16,16 +16,16 @@ def validate_api_key_format(key: str) -> tuple[bool, str]:
     if not key:
         return False, "API key is empty"
         
-    if not key.startswith('sk-'):
-        return False, "API key must start with 'sk-'"
+    if not key.startswith('gsk_'):
+        return False, "API key must start with 'gsk_'"
         
     if len(key) < 40:
         return False, "API key must be at least 40 characters long"
         
     return True, "API key format is valid"
 
-def test_openai_api_key(key_to_test: str) -> tuple[bool, str]:
-    """Test if an OpenAI API key is valid and working.
+def test_groq_api_key(key_to_test: str) -> tuple[bool, str]:
+    """Test if a Groq API key is valid and working.
     
     Args:
         key_to_test: The API key to test
@@ -45,11 +45,11 @@ def test_openai_api_key(key_to_test: str) -> tuple[bool, str]:
     
     try:
         # Initialize the client
-        client = OpenAI(api_key=key_to_test)
+        client = groq.Groq(api_key=key_to_test)
         
         # Make a simple API call
         response = client.chat.completions.create(
-            model="gpt-4-turbo-preview",  # Using GPT-4 for better reliability
+            model="qwen/qwen3-32b",  # Using Qwen3-32B for testing
             messages=[
                 {"role": "system", "content": "You are a test assistant."},
                 {"role": "user", "content": "Say 'API key is valid' if you receive this message."}
@@ -70,24 +70,24 @@ def test_openai_api_key(key_to_test: str) -> tuple[bool, str]:
         print(error_msg)
         
         # Provide more helpful messages for common errors
-        if "Incorrect API key provided" in error_msg:
+        if "invalid_api_key" in error_msg:
             print("\nThe API key format is correct but the key is invalid or revoked.")
-            print("Please check your API key at: https://platform.openai.com/api-keys")
-        elif "Rate limit" in error_msg:
+            print("Please check your API key at: https://console.groq.com/keys")
+        elif "rate_limit" in error_msg:
             print("\nRate limit hit. Your API key is valid but you've hit your usage limits.")
-        elif "insufficient_quota" in error_msg:
+        elif "quota" in error_msg:
             print("\nYour API key is valid but you have insufficient quota.")
-            print("Please check your usage at: https://platform.openai.com/usage")
+            print("Please check your usage at: https://console.groq.com/usage")
             
         return False, f"API error: {error_msg}"
 
 def main():
     """Main function to test the API key."""
     # Get the current API key
-    current_key = os.getenv('OPENAI_API_KEY')
+    current_key = os.getenv('GROQ_API_KEY')
     
     # Test the key
-    success, message = test_openai_api_key(current_key)
+    success, message = test_groq_api_key(current_key)
     
     # Exit with appropriate status code
     sys.exit(0 if success else 1)

@@ -17,7 +17,7 @@ from models import TodoItem
 from db_utils import DatabaseManager
 from todo_commands import TodoCommands
 from code_generator import CodeGenerator, CodeTask, MCPContext, clean_code_document, clean_file_of_triple_quotes, clean_file_of_backticks
-from openai import OpenAI
+import groq
 from env_manager import IsolatedEnvironment
 from git_manager import GitManager
 
@@ -36,10 +36,10 @@ app = FastAPI(
 db_manager = DatabaseManager(os.getenv("DB_PATH", "todos.db"))
 todo_commands = TodoCommands(db_manager)
 
-# Get OpenAI API key from environment
-api_key = os.getenv("OPENAI_API_KEY")
+# Get Groq API key from environment
+api_key = os.getenv("GROQ_API_KEY")
 if not api_key:
-    logger.warning("No OpenAI API key found in environment. Code generation will be disabled.")
+    logger.warning("No GROQ_API_KEY found in environment. Code generation will be disabled.")
 
 # Initialize code generator and git manager
 code_generator = CodeGenerator(api_key=api_key, project_dir="project")

@@ -7,7 +7,7 @@ import shutil
 class TestCodeGenerator(unittest.TestCase):
     def setUp(self):
         self.test_project_dir = "test_project"
-        self.api_key = os.getenv("OPENAI_KEY", "dummy_key")
+        self.api_key = os.getenv("GROQ_API_KEY", "dummy_key")
         self.code_generator = CodeGenerator(self.api_key, self.test_project_dir)
         
         # Create test project directory if it doesn't exist

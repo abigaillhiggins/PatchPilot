@@ -8,7 +8,7 @@ from src.core.db_utils import DatabaseManager
 from src.core.models import TodoItem
 from src.core.todo_commands import TodoCommands
 from typing import Optional, List
-from openai import OpenAI
+import groq
 from src.utils.html_generator import HtmlGenerator
 from src.generators.code_generator import CodeGenerator, CodeTask
 import sys
@@ -23,18 +23,14 @@ class AutoDatabaseManager:
         self.db_manager = DatabaseManager(db_path)
         self.todo_commands = TodoCommands(self.db_manager)
         self.html_generator = HtmlGenerator()
-        # Accept both OPENAI_API_KEY and OPENAI_KEY for backward compatibility
-        self.openai_api_key = os.getenv('OPENAI_API_KEY') or os.getenv('OPENAI_KEY')
-        if not self.openai_api_key:
-            raise ValueError("OpenAI API key not found in environment variables")
-        # Initialize OpenAI client with project API key
-        self.client = OpenAI(
-            api_key=self.openai_api_key,
-            # Add base_url if using a different API endpoint
-            # base_url="https://api.openai.com/v1"
-        )
+        # Get Groq API key
+        self.groq_api_key = os.getenv('GROQ_API_KEY')
+        if not self.groq_api_key:
+            raise ValueError("GROQ_API_KEY environment variable not found")
+        # Initialize Groq client
+        self.client = groq.Groq(api_key=self.groq_api_key)
         # Initialize code generator with the correct project directory
-        self.code_generator = CodeGenerator(api_key=self.openai_api_key, project_dir=os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+        self.code_generator = CodeGenerator(api_key=self.groq_api_key, project_dir=os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
     def analyze_database_issue(self, error_message: str) -> dict:
         """Use OpenAI to analyze database issues and suggest fixes."""

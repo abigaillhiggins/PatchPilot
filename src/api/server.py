@@ -13,12 +13,16 @@ from typing import List, Optional, Dict, Tuple, Any
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from datetime import datetime
-from src.core.models import TodoItem
-from src.core.db_utils import DatabaseManager
-from src.core.todo_commands import TodoCommands
-from src.generators.code_generator import CodeGenerator, CodeTask, GeneratedCode
-from src.utils.env_manager import IsolatedEnvironment
-from src.utils.git_manager import GitManager
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+
+from core.models import TodoItem
+from core.db_utils import DatabaseManager
+from core.todo_commands import TodoCommands
+from generators.code_generator import CodeGenerator, CodeTask, GeneratedCode
+from utils.env_manager import IsolatedEnvironment
+from utils.git_manager import GitManager
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

@@ -3,9 +3,9 @@ import os
 
 def main():
     # Initialize code generator
-    api_key = os.getenv("OPENAI_KEY")
+    api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
-        print("Please set OPENAI_KEY environment variable")
+        print("Please set GROQ_API_KEY environment variable")
         return
     
     generator = CodeGenerator(api_key, "real_test_project")
