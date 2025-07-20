@@ -1,6 +1,6 @@
 import pytest
 from datetime import datetime
-from src.core.autonomous_manager import AutonomousManager, DecisionContext
+from core.autonomous_manager import AutonomousManager, DecisionContext
 
 @pytest.fixture
 def autonomous_manager():

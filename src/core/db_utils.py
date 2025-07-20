@@ -8,7 +8,7 @@ import logging
 import threading
 import json
 from typing import List, Optional
-from src.core.models import TodoItem
+from core.models import TodoItem
 from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)

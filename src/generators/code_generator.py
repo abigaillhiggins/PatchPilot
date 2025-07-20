@@ -462,10 +462,16 @@ class CodeGenerator:
             prompt += (
                 "Write clean, well-documented Python code following PEP 8 style guidelines. "
                 "Include docstrings and type hints.\n"
-                "ALSO, generate a requirements.txt file listing ALL external dependencies (such as requests, numpy, etc) needed to run the code. "
+                "ALSO, generate a requirements.txt file listing ALL external dependencies needed to run the code. "
+                "Include ALL packages that need to be installed via pip (requests, beautifulsoup4, pandas, numpy, etc). "
+                "Do NOT include standard library modules (os, sys, json, csv, argparse, logging, typing, etc). "
                 "If no external dependencies are needed, generate an empty requirements.txt file. "
                 "Output both the code and the requirements.txt file, clearly separated in markdown code blocks.\n"
-                "IMPORTANT: When creating multiple files, use file paths in code block headers like ```main.py, ```requirements.txt, ```utils.py, etc.\n\n"
+                "IMPORTANT: When creating multiple files, use file paths in code block headers like ```main.py, ```requirements.txt, ```utils.py, etc.\n"
+                "CRITICAL: The requirements.txt file should contain ONLY package names and versions, one per line. "
+                "Do NOT include comments, Docker commands, or pip install commands.\n"
+                "CRITICAL: The main.py file should contain ONLY Python code. Do NOT include project structure comments, "
+                "file listings, or requirements.txt content in the main.py file.\n\n"
             )
         elif task.language.lower() in ["javascript", "typescript"]:
             prompt += "Write clean, modern JavaScript/TypeScript code following standard style guidelines. Use ES6+ features where appropriate.\n\n"
@@ -502,7 +508,9 @@ class CodeGenerator:
         simplified_prompt = f"""Create a Python implementation for: {core_requirement}
 
 Focus on the core functionality. Generate clean, well-documented code with proper error handling.
-Include a requirements.txt file if external dependencies are needed.
+Include a requirements.txt file listing ALL external dependencies needed (requests, beautifulsoup4, pandas, etc).
+Do NOT include standard library modules (os, sys, json, csv, argparse, logging, typing, etc).
+The requirements.txt should contain ONLY package names and versions, one per line.
 
 Output the code in markdown code blocks."""
         
@@ -682,7 +690,65 @@ Output the code in markdown code blocks."""
             if main_code:
                 files['main.py'] = main_code
         
+        # Post-process files to clean up common issues
+        files = self._clean_extracted_files(files)
+        
         return files
+    
+    def _clean_extracted_files(self, files: dict) -> dict:
+        """Clean up extracted files to fix common issues."""
+        import re
+        
+        cleaned_files = {}
+        
+        for file_name, content in files.items():
+            if file_name == 'main.py':
+                # Clean main.py of project structure comments and requirements.txt content
+                lines = content.split('\n')
+                cleaned_lines = []
+                skip_until_code = False
+                
+                for line in lines:
+                    stripped = line.strip()
+                    
+                    # Skip project structure comments
+                    if (stripped.startswith('# Project structure') or 
+                        stripped.startswith('# requirements.txt') or
+                        stripped.startswith('scraper_project/') or
+                        stripped.startswith('├──') or
+                        stripped.startswith('└──') or
+                        stripped.startswith('│') or
+                        stripped.startswith('requirements') and 'requests' in line):
+                        continue
+                    
+                    # Skip empty lines after project structure
+                    if skip_until_code and not stripped:
+                        continue
+                    
+                    # If we find actual Python code, stop skipping
+                    if (stripped.startswith('import ') or 
+                        stripped.startswith('from ') or 
+                        stripped.startswith('def ') or 
+                        stripped.startswith('class ') or
+                        stripped.startswith('if __name__')):
+                        skip_until_code = False
+                    
+                    # If we find a comment that looks like it's about project structure, skip until we find code
+                    if stripped.startswith('#') and ('structure' in stripped.lower() or 'project' in stripped.lower()):
+                        skip_until_code = True
+                        continue
+                    
+                    if not skip_until_code:
+                        cleaned_lines.append(line)
+                
+                # Join lines and clean up
+                cleaned_content = '\n'.join(cleaned_lines).strip()
+                if cleaned_content:
+                    cleaned_files[file_name] = cleaned_content
+            else:
+                cleaned_files[file_name] = content
+        
+        return cleaned_files
     
     def _extract_main_code_only(self, content: str) -> str:
         """Extract only the main code (fallback method)."""
@@ -945,7 +1011,8 @@ Output the code in markdown code blocks."""
             {chr(10).join(f'- {req}' for req in task.requirements)}
 
             Please provide the improved code that addresses all the required improvements.
-            Return ONLY the implementation code.
+            CRITICAL: Return ONLY the raw Python code without any explanations, markdown formatting, or code blocks.
+            Do not include any triple backticks (```) or language tags.
             """
 
             # Generate improved code using Groq API
@@ -963,6 +1030,17 @@ Output the code in markdown code blocks."""
             # Decode and clean the improved code
             improved_code = response.choices[0].message.content
             improved_code = improved_code.strip()
+            
+            # Remove <think> tags and their content
+            import re
+            improved_code = re.sub(r'<think>.*?</think>', '', improved_code, flags=re.DOTALL)
+            improved_code = re.sub(r'<think>', '', improved_code)
+            improved_code = re.sub(r'</think>', '', improved_code)
+            
+            # Extract only the code part if it's wrapped in code blocks
+            code_blocks = re.findall(r'```(?:python)?\n(.*?)```', improved_code, re.DOTALL)
+            if code_blocks:
+                improved_code = code_blocks[0].strip()
             
             # Format the improved code
             improved_code = self._format_code(improved_code, task.language)

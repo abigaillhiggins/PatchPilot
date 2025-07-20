@@ -8,8 +8,12 @@ import os
 import sys
 import argparse
 import logging
-from src.core.main import AutoDatabaseManager
-from src.api.server import app
+
+# Add src directory to Python path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
+
+from core.main import AutoDatabaseManager
+from api.server import app
 import uvicorn
 
 # Configure logging

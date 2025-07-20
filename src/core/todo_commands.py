@@ -4,8 +4,8 @@ This module contains the implementation of todo-related commands.
 """
 
 from typing import Optional
-from src.core.models import TodoItem
-from src.core.db_utils import DatabaseManager
+from core.models import TodoItem
+from core.db_utils import DatabaseManager
 import logging
 
 logger = logging.getLogger(__name__)
@@ -82,4 +82,27 @@ class TodoCommands:
             ]
         except Exception as e:
             logger.error(f"Error searching todos: {str(e)}")
-            return [] 
+            return []
+
+    def clear_todos(self, completed_only: bool = False) -> int:
+        """Clear todos from the database.
+        
+        Args:
+            completed_only: If True, only clear completed todos. If False, clear all todos.
+            
+        Returns:
+            Number of todos that were cleared.
+        """
+        try:
+            cursor = self.db_manager.conn.cursor()
+            if completed_only:
+                cursor.execute("DELETE FROM todos WHERE completed = 1")
+            else:
+                cursor.execute("DELETE FROM todos")
+            
+            deleted_count = cursor.rowcount
+            self.db_manager.conn.commit()
+            return deleted_count
+        except Exception as e:
+            logger.error(f"Error clearing todos: {str(e)}")
+            return 0 

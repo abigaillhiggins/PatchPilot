@@ -1,238 +1,245 @@
 # PatchPilot
 
-PatchPilot is an API-driven code generation and management system that helps you create, manage, and execute code patches.
+A powerful AI-driven code generation and patch management system with a beautiful web interface.
 
-## Setup Instructions
+## Features
 
-1. Clone the repository:
+- 🤖 **AI-Powered Code Generation** - Generate code from natural language descriptions
+- 📝 **Todo Management** - Create and manage coding tasks with requirements
+- 🔧 **Code Patches** - Generate, execute, and manage code patches
+- 🚀 **Git Integration** - Full Git operations for version control
+- 🎨 **Beautiful Frontend** - Modern Jekyll-based web interface with red theme
+- ⚡ **Real-time Execution** - Execute and monitor code patches in real-time
+- 🔄 **Auto-regeneration** - Intelligent code regeneration on execution failures
+
+## Architecture
+
+PatchPilot consists of two main components:
+
+1. **FastAPI Backend** (`src/api/server.py`) - RESTful API for all operations
+2. **Jekyll Frontend** (`frontend/`) - Beautiful web interface built with Ruby/Jekyll
+
+## Quick Start
+
+### 1. Start the Backend API
+
 ```bash
-git clone https://github.com/abigaillhiggins/PatchPilot.git
-cd PatchPilot
-```
-
-2. Create and activate a virtual environment:
-```bash
-python -m venv venv
-source venv/bin/activate  # On Windows use: venv\Scripts\activate
-```
-
-3. Install dependencies:
-```bash
+# Install Python dependencies
 pip install -r requirements.txt
+
+# Start the FastAPI server
+python run.py
 ```
 
-4. Set up environment variables:
+The API will be available at `http://localhost:8000`
+
+### 2. Start the Frontend
+
 ```bash
-export GROQ_API_KEY="your-groq-api-key"  # Required for code generation
-export DB_PATH="todos.db"  # Optional, defaults to todos.db
+# Option 1: Use the startup script
+./start_frontend.sh
+
+# Option 2: Manual setup
+cd frontend
+bundle install
+bundle exec jekyll serve --livereload
 ```
 
-5. Run the server:
-```bash
-PYTHONPATH=. python run.py server --port 8002
-```
+The frontend will be available at `http://localhost:4000`
 
-The server will start on `http://localhost:8002`
+## Frontend Features
+
+The Jekyll frontend provides a beautiful, responsive interface with:
+
+- **Dashboard** - Overview with statistics and quick actions
+- **Todo Management** - Full CRUD operations with search and filtering
+- **Patch Management** - View, execute, and manage generated code
+- **Git Operations** - Complete repository management
+- **Red Theme** - Modern, cohesive design with red color scheme
+
+### Frontend Technology Stack
+
+- **Jekyll** - Static site generator
+- **Ruby** - Backend language
+- **Tailwind CSS** - Utility-first CSS framework
+- **Font Awesome** - Icon library
+- **JavaScript (ES6+)** - Frontend interactivity
 
 ## API Endpoints
 
+### Todos
+- `GET /todos/` - List all todos
+- `POST /todos/` - Create new todo
+- `PUT /todos/{id}/complete` - Mark todo as complete
+- `PUT /todos/{id}/uncomplete` - Mark todo as incomplete
+- `DELETE /todos/{id}` - Delete todo
+- `DELETE /todos/clear-all` - Clear all todos
+
+### Code Generation
+- `POST /generate-code/{todo_id}` - Generate code from todo
+- `POST /run-patch/{todo_id}` - Run patch execution
+- `POST /execute-patch/` - Execute patch directly
+- `GET /patch-status/{patch_id}` - Get patch execution status
+
+### Patches
+- `GET /patches/list` - List all patches
+- `DELETE /patches/clear` - Clear patches
+
 ### Git Operations
+- `POST /git/init` - Initialize repository
+- `POST /git/config` - Configure Git user
+- `POST /git/remote` - Add remote
+- `POST /git/commit` - Create commit
+- `POST /git/push` - Push changes
+- `POST /git/push-patch/{patch_id}` - Push specific patch
+- `GET /git/status` - Get repository status
 
-```bash
-# Initialize Git Repository
-curl -X POST http://localhost:8002/git/init
+## Usage Examples
 
-# Configure Git User
-curl -X POST http://localhost:8002/git/config \
-  -H "Content-Type: application/json" \
-  -d '{"name": "Your Name", "email": "your.email@example.com"}'
+### Creating a Todo and Generating Code
 
-# Add Remote
-curl -X POST http://localhost:8002/git/remote \
-  -H "Content-Type: application/json" \
-  -d '{"name": "origin", "url": "https://github.com/username/repo.git"}'
+1. **Create a Todo**:
+   ```bash
+   curl -X POST "http://localhost:8000/todos/" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "title": "Web Scraper",
+       "description": "Create a web scraper for news articles",
+       "language": "python",
+       "requirements": [
+         "Scrape news articles from a website",
+         "Extract title, content, and date",
+         "Save to CSV file"
+       ],
+       "package_requirements": [
+         "requests>=2.25.0",
+         "beautifulsoup4>=4.9.0",
+         "pandas>=1.3.0"
+       ]
+     }'
+   ```
 
-# Create Commit
-curl -X POST http://localhost:8002/git/commit \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Your commit message", "files": ["path/to/file1", "path/to/file2"]}'
+2. **Generate Code**:
+   ```bash
+   curl -X POST "http://localhost:8000/generate-code/1"
+   ```
 
-# Push Changes
-curl -X POST http://localhost:8002/git/push \
-  -H "Content-Type: application/json" \
-  -d '{"remote": "origin", "branch": "main"}'
+3. **Execute the Patch**:
+   ```bash
+   curl -X POST "http://localhost:8000/execute-patch/" \
+     -H "Content-Type: application/json" \
+     -d '{"patch_id": "generated_patch_id", "analyze": true}'
+   ```
 
-# Get Git Status
-curl http://localhost:8002/git/status
+### Using the Web Interface
 
-# Push Specific Patch
-curl -X POST http://localhost:8002/git/push-patch/{patch_id} \
-  -H "Content-Type: application/json" \
-  -d '{"commit_message": "Optional custom message", "remote": "origin", "branch": "main"}'
+1. Open `http://localhost:4000` in your browser
+2. Navigate to the **Todos** page
+3. Click **New Todo** to create a task
+4. Fill in the requirements and click **Create Todo**
+5. Click **Generate** to create code from the todo
+6. View the generated patch in the **Patches** page
+7. Click **Execute** to run the code
+8. Use **Git Operations** to commit and push your changes
+
+## Configuration
+
+### Backend Configuration
+
+Environment variables:
+- `DB_PATH` - Path to SQLite database (default: `todos.db`)
+- `GROQ_API_KEY` - Your Groq API key for code generation
+
+### Frontend Configuration
+
+Edit `frontend/_config.yml`:
+```yaml
+api_base_url: "http://localhost:8000"
+theme_colors:
+  primary: "#dc2626"      # Main red color
+  secondary: "#991b1b"    # Darker red
+  accent: "#fca5a5"       # Light red
 ```
 
-### Todo Management
+## Development
 
-```bash
-# Create Todo
-curl -X POST http://localhost:8002/todos/ \
-  -H "Content-Type: application/json" \
-  -d '{
-    "title": "Task title",
-    "description": "Task description",
-    "language": "python",
-    "requirements": ["Feature requirement 1", "Feature requirement 2"],
-    "package_requirements": ["package1>=1.0.0", "package2>=2.0.0"],
-    "context": "Additional context",
-    "metadata": {"key": "value"}
-  }'
+### Backend Development
 
-# List All Todos
-curl http://localhost:8002/todos/
+The backend is built with FastAPI and includes:
+- SQLite database for todo storage
+- Groq API integration for code generation
+- Isolated environment execution
+- Git operations management
 
-# Complete Todo
-curl -X PUT http://localhost:8002/todos/{todo_id}/complete
+### Frontend Development
 
-# Delete Todo
-curl -X DELETE http://localhost:8002/todos/{todo_id}
+The frontend is built with Jekyll and includes:
+- Responsive design with Tailwind CSS
+- Real-time API integration
+- Modal-based interactions
+- Search and filtering capabilities
 
-# Search Todos
-curl "http://localhost:8002/todos/search?query=your_search_term"
+## Project Structure
+
+```
+PatchPilot-groq/
+├── src/
+│   ├── api/
+│   │   └── server.py          # FastAPI server
+│   ├── core/
+│   │   ├── models.py          # Data models
+│   │   ├── db_utils.py        # Database utilities
+│   │   └── todo_commands.py   # Todo operations
+│   ├── generators/
+│   │   └── code_generator.py  # Code generation logic
+│   └── utils/
+│       ├── env_manager.py     # Environment management
+│       └── git_manager.py     # Git operations
+├── frontend/                  # Jekyll frontend
+│   ├── _config.yml           # Jekyll configuration
+│   ├── _layouts/
+│   │   └── default.html      # Main layout
+│   ├── assets/js/            # JavaScript files
+│   ├── index.html            # Dashboard
+│   ├── todos.html            # Todo management
+│   ├── patches.html          # Patch management
+│   ├── git.html              # Git operations
+│   └── README.md             # Frontend documentation
+├── patches/                   # Generated code patches
+├── requirements.txt           # Python dependencies
+├── run.py                    # Backend startup script
+├── start_frontend.sh         # Frontend startup script
+└── README.md                 # This file
 ```
 
-### Code Generation and Execution
+## Troubleshooting
 
-```bash
-# Generate Code for Todo
-curl -X POST http://localhost:8002/generate-code/{todo_id}
+### Common Issues
 
-# Run Patch with Analysis
-curl -X POST http://localhost:8002/run-patch/{todo_id}?analyze=true
+1. **API Connection Failed**
+   - Ensure the FastAPI server is running on port 8000
+   - Check the `api_base_url` in `frontend/_config.yml`
 
-# Execute Patch Directly
-curl -X POST http://localhost:8002/execute-patch/ \
-  -H "Content-Type: application/json" \
-  -d '{"patch_id": "your_patch_id", "analyze": true}'
+2. **Jekyll Build Errors**
+   - Install Ruby 2.7+ and Bundler
+   - Run `bundle install` in the frontend directory
 
-# Get Patch Status
-curl http://localhost:8002/patch-status/{patch_id}
-```
+3. **Code Generation Fails**
+   - Verify your Groq API key is set
+   - Check the API logs for detailed error messages
 
-## Response Models
+## Contributing
 
-All endpoints return JSON responses. Common response structures include:
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Test both backend and frontend
+5. Submit a pull request
 
-- Success responses include a `message` field describing the operation result
-- Error responses include a `detail` field describing what went wrong
-- Patch execution responses include:
-  - `status`: Current status of the execution
-  - `execution_output`: Standard output from the execution
-  - `error_output`: Standard error output if any
-  - `return_code`: Execution return code
-  - `analysis`: Optional analysis of the execution (if requested)
-  - `suggested_improvements`: Optional suggestions for code improvement
+## License
 
-## Example Use Cases
+This project is licensed under the MIT License.
 
-### Example 1: Creating a JSON Schema Validator
+---
 
-Here's a complete example of using PatchPilot to create and test a JSON schema validator:
-
-1. Create a todo for the validator:
-```bash
-curl -X POST http://localhost:8002/todos/ \
-  -H "Content-Type: application/json" \
-  -d '{
-    "title": "JSON Schema Validator",
-    "description": "Create a function that validates a given JSON object against a schema",
-    "language": "python",
-    "requirements": [
-      "Support nested objects",
-      "Support array validation",
-      "Support type validation"
-    ],
-    "package_requirements": ["jsonschema>=4.0.0"],
-    "context": "We need a reusable validation function",
-    "metadata": {
-      "type": "utility",
-      "priority": "high"
-    }
-  }'
-```
-
-Response:
-```json
-{
-  "id": 3,
-  "title": "JSON Schema Validator",
-  "description": "Create a function that validates a given JSON object against a schema",
-  "completed": false,
-  "created_at": "2025-07-08T15:52:48.402915",
-  "language": "python",
-  "requirements": ["Support nested objects", "Support array validation", "Support type validation"],
-  "context": "We need a reusable validation function",
-  "metadata": {"type": "utility", "priority": "high"},
-  "patch_id": null
-}
-```
-
-2. Generate code for the todo:
-```bash
-curl -X POST http://localhost:8002/generate-code/3
-```
-
-The generated code will include:
-- Type validation for different JSON types (object, array, string, number, boolean)
-- Support for nested object validation
-- Array validation with item type checking
-- Required field validation
-- A comprehensive example showing how to use the validator
-
-### Example 2: Creating a String Utility
-
-Here's another example of using PatchPilot to create and test a string utility function:
-
-1. Create a todo for the string utility:
-```bash
-curl -X POST http://localhost:8002/todos/ \
-  -H "Content-Type: application/json" \
-  -d '{
-    "title": "Create String Reversal Utility",
-    "description": "Create a Python function that can reverse strings and check for palindromes",
-    "language": "python",
-    "requirements": [
-      "Handle empty strings",
-      "Support special characters",
-      "Case-sensitive palindrome check"
-    ],
-    "package_requirements": [],
-    "context": "The function should handle empty strings and special characters correctly"
-  }'
-```
-
-2. Generate code for the todo:
-```bash
-curl -X POST http://localhost:8002/generate-code/1
-```
-
-3. Run and analyze the generated code:
-```bash
-curl -X POST http://localhost:8002/run-patch/1?analyze=true
-```
-
-4. Check execution status:
-```bash
-curl http://localhost:8002/patch-status/20250707_134732_create_a_python_function_that_reverses_a_string
-```
-
-5. If satisfied with the results, commit the patch:
-```bash
-curl -X POST http://localhost:8002/git/push-patch/20250707_134732_create_a_python_function_that_reverses_a_string \
-  -H "Content-Type: application/json" \
-  -d '{
-    "commit_message": "Add string reversal utility with palindrome check",
-    "branch": "feature/string-utils"
-  }'
-```
-
-The generated code will be saved in the patches directory, tested, analyzed for potential improvements, and can be committed to your repository. PatchPilot handles all the boilerplate of creating, testing, and managing the code changes. 
+Built with ❤️ using FastAPI, Jekyll, and AI-powered code generation. 

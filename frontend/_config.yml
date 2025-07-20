@@ -1,0 +1,59 @@
+title: PatchPilot Dashboard
+description: A beautiful frontend for managing todos and generating code patches
+baseurl: ""
+url: "http://localhost:4000"
+
+# Build settings
+markdown: kramdown
+highlighter: rouge
+permalink: pretty
+
+# Plugins
+plugins:
+  - jekyll-feed
+  - jekyll-seo-tag
+
+# Collections
+collections:
+  docs:
+    output: true
+    permalink: /:collection/:name
+
+# Defaults
+defaults:
+  - scope:
+      path: ""
+      type: "docs"
+    values:
+      layout: "default"
+
+# Exclude from processing
+exclude:
+  - Gemfile
+  - Gemfile.lock
+  - node_modules
+  - vendor/bundle/
+  - vendor/cache/
+  - vendor/gems/
+  - vendor/ruby/
+
+# API Configuration
+api_base_url: "http://localhost:8000"
+api_endpoints:
+  todos: "/todos/"
+  patches: "/patches/"
+  git: "/git/"
+  generate_code: "/generate-code/"
+  run_patch: "/run-patch/"
+  execute_patch: "/execute-patch/"
+  patch_status: "/patch-status/"
+
+# Theme colors (red theme)
+theme_colors:
+  primary: "#dc2626"
+  secondary: "#991b1b"
+  accent: "#fca5a5"
+  background: "#fef2f2"
+  surface: "#ffffff"
+  text: "#1f2937"
+  text_light: "#6b7280" 

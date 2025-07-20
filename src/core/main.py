@@ -4,13 +4,13 @@
 import os
 import logging
 import argparse
-from src.core.db_utils import DatabaseManager
-from src.core.models import TodoItem
-from src.core.todo_commands import TodoCommands
+from core.db_utils import DatabaseManager
+from core.models import TodoItem
+from core.todo_commands import TodoCommands
 from typing import Optional, List
 import groq
-from src.utils.html_generator import HtmlGenerator
-from src.generators.code_generator import CodeGenerator, CodeTask
+from utils.html_generator import HtmlGenerator
+from generators.code_generator import CodeGenerator, CodeTask
 import sys
 import subprocess
 
@@ -23,14 +23,22 @@ class AutoDatabaseManager:
         self.db_manager = DatabaseManager(db_path)
         self.todo_commands = TodoCommands(self.db_manager)
         self.html_generator = HtmlGenerator()
-        # Get Groq API key
+        
+        # Initialize AI components only if GROQ_API_KEY is available
         self.groq_api_key = os.getenv('GROQ_API_KEY')
-        if not self.groq_api_key:
-            raise ValueError("GROQ_API_KEY environment variable not found")
-        # Initialize Groq client
-        self.client = groq.Groq(api_key=self.groq_api_key)
-        # Initialize code generator with the correct project directory
-        self.code_generator = CodeGenerator(api_key=self.groq_api_key, project_dir=os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+        self.client = None
+        self.code_generator = None
+        
+        if self.groq_api_key:
+            try:
+                # Initialize Groq client
+                self.client = groq.Groq(api_key=self.groq_api_key)
+                # Initialize code generator with the correct project directory
+                self.code_generator = CodeGenerator(api_key=self.groq_api_key, project_dir=os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+            except Exception as e:
+                logger.warning(f"Failed to initialize AI components: {str(e)}")
+        else:
+            logger.info("GROQ_API_KEY not found. AI features will be disabled.")
 
     def analyze_database_issue(self, error_message: str) -> dict:
         """Use OpenAI to analyze database issues and suggest fixes."""
@@ -130,6 +138,20 @@ class AutoDatabaseManager:
             logger.info(f"[{status}] {todo.id}: {todo.title}")
             if todo.description:
                 logger.info(f"    {todo.description}")
+
+    def clear_todos(self, completed_only: bool = False) -> None:
+        """Clear todos from the database."""
+        deleted_count = self.todo_commands.clear_todos(completed_only)
+        if deleted_count > 0:
+            if completed_only:
+                logger.info(f"Cleared {deleted_count} completed todo(s)!")
+            else:
+                logger.info(f"Cleared all {deleted_count} todo(s)!")
+        else:
+            if completed_only:
+                logger.info("No completed todos found to clear.")
+            else:
+                logger.info("No todos found to clear.")
 
     def generate_blog(self, title: str) -> bool:
         """Generate a blog site with the given title."""
@@ -352,6 +374,11 @@ def main():
     delete_parser = subparsers.add_parser('delete', help='Delete a todo item')
     delete_parser.add_argument('id', type=int, help='ID of the todo item')
 
+    # Clear todos command
+    clear_parser = subparsers.add_parser('clear', help='Clear todos from the database')
+    clear_parser.add_argument('--completed-only', '-c', action='store_true', 
+                             help='Only clear completed todos (default: clear all todos)')
+
     # Search todos command
     search_parser = subparsers.add_parser('search', help='Search todo items')
     search_parser.add_argument('query', help='Search query')
@@ -407,6 +434,9 @@ def main():
         
         elif args.command == 'delete':
             auto_manager.delete_todo(args.id)
+        
+        elif args.command == 'clear':
+            auto_manager.clear_todos(args.completed_only)
         
         elif args.command == 'search':
             auto_manager.search_todos(args.query)

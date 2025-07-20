@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Git Operations - PatchPilot Dashboard</title>
+    <meta name="description" content="Manage Git repository operations">
+    
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Custom CSS -->
+    <style>
+        :root {
+            --primary: #dc2626;
+            --secondary: #991b1b;
+            --accent: #fca5a5;
+            --background: #fef2f2;
+            --surface: #ffffff;
+            --text: #1f2937;
+            --text-light: #6b7280;
+        }
+        
+        body {
+            background-color: var(--background);
+            color: var(--text);
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+        
+        .btn-primary {
+            background-color: var(--primary);
+            color: white;
+            transition: all 0.2s ease;
+        }
+        
+        .btn-primary:hover {
+            background-color: var(--secondary);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(220, 38, 38, 0.3);
+        }
+        
+        .btn-secondary {
+            background-color: var(--accent);
+            color: var(--secondary);
+            transition: all 0.2s ease;
+        }
+        
+        .btn-secondary:hover {
+            background-color: var(--primary);
+            color: white;
+        }
+        
+        .card {
+            background-color: var(--surface);
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+            transition: all 0.2s ease;
+        }
+        
+        .card:hover {
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.1);
+            transform: translateY(-2px);
+        }
+        
+        .nav-link {
+            color: var(--text-light);
+            transition: color 0.2s ease;
+        }
+        
+        .nav-link:hover {
+            color: var(--primary);
+        }
+        
+        .nav-link.active {
+            color: var(--primary);
+            font-weight: 600;
+        }
+        
+        .loading {
+            border: 2px solid var(--accent);
+            border-top: 2px solid var(--primary);
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .fade-in {
+            animation: fadeIn 0.5s ease-in;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .success-badge {
+            background-color: #dcfce7;
+            color: #166534;
+            border: 1px solid #bbf7d0;
+        }
+        
+        .error-badge {
+            background-color: #fef2f2;
+            color: #dc2626;
+            border: 1px solid #fecaca;
+        }
+        
+        .warning-badge {
+            background-color: #fffbeb;
+            color: #d97706;
+            border: 1px solid #fed7aa;
+        }
+        
+        .gray-badge {
+            background-color: #f3f4f6;
+            color: #6b7280;
+            border: 1px solid #d1d5db;
+        }
+        
+        .btn-danger {
+            background-color: #dc2626;
+            color: white;
+            transition: all 0.2s ease;
+        }
+        
+        .btn-danger:hover {
+            background-color: #b91c1c;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(220, 38, 38, 0.3);
+        }
+    </style>
+    
+    <!-- Font Awesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Begin Jekyll SEO tag v2.8.0 -->
+<title>Git Operations | PatchPilot Dashboard</title>
+<meta name="generator" content="Jekyll v4.3.4" />
+<meta property="og:title" content="Git Operations" />
+<meta property="og:locale" content="en_US" />
+<meta name="description" content="Manage Git repository operations" />
+<meta property="og:description" content="Manage Git repository operations" />
+<link rel="canonical" href="http://0.0.0.0:4000/git/" />
+<meta property="og:url" content="http://0.0.0.0:4000/git/" />
+<meta property="og:site_name" content="PatchPilot Dashboard" />
+<meta property="og:type" content="website" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="Git Operations" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebPage","description":"Manage Git repository operations","headline":"Git Operations","url":"http://0.0.0.0:4000/git/"}</script>
+<!-- End Jekyll SEO tag -->
+
+</head>
+<body class="min-h-screen">
+    <!-- Navigation -->
+    <nav class="bg-white shadow-sm border-b border-gray-200">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-16">
+                <div class="flex items-center">
+                    <div class="flex-shrink-0">
+                        <h1 class="text-2xl font-bold text-red-600">
+                            <i class="fas fa-rocket mr-2"></i>
+                            PatchPilot
+                        </h1>
+                    </div>
+                    <div class="hidden md:ml-6 md:flex md:space-x-8">
+                        <a href="/" class="nav-link px-3 py-2 rounded-md text-sm font-medium ">
+                            <i class="fas fa-home mr-1"></i>Dashboard
+                        </a>
+                        <a href="/todos" class="nav-link px-3 py-2 rounded-md text-sm font-medium ">
+                            <i class="fas fa-tasks mr-1"></i>Todos
+                        </a>
+                        <a href="/patches" class="nav-link px-3 py-2 rounded-md text-sm font-medium ">
+                            <i class="fas fa-code mr-1"></i>Patches
+                        </a>
+                        <a href="/git" class="nav-link px-3 py-2 rounded-md text-sm font-medium active">
+                            <i class="fab fa-git-alt mr-1"></i>Git
+                        </a>
+                    </div>
+                </div>
+                <div class="flex items-center">
+                    <div class="flex-shrink-0">
+                        <span class="text-sm text-gray-500">
+                            <i class="fas fa-circle text-green-500 mr-1"></i>
+                            API Connected
+                        </span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
+        <div class="px-4 py-6 sm:px-0">
+            <div class="space-y-6">
+    <!-- Header -->
+    <div class="bg-white rounded-lg shadow-sm p-6">
+        <div class="flex items-center justify-between">
+            <div>
+                <h1 class="text-3xl font-bold text-gray-900">Git Operations</h1>
+                <p class="text-gray-600 mt-2">Manage your Git repository and version control</p>
+            </div>
+            <div class="flex space-x-3">
+                <button onclick="showGitConfigModal()" class="btn-secondary px-6 py-3 rounded-lg font-medium">
+                    <i class="fas fa-cog mr-2"></i>Configure
+                </button>
+                <button onclick="initRepository()" class="btn-primary px-6 py-3 rounded-lg font-medium">
+                    <i class="fab fa-git-alt mr-2"></i>Initialize
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Git Status -->
+    <div class="card p-6">
+        <div class="flex items-center justify-between mb-4">
+            <h3 class="text-lg font-semibold text-gray-900">Repository Status</h3>
+            <button onclick="refreshGitStatus()" class="p-2 text-gray-500 hover:text-gray-700">
+                <i class="fas fa-refresh"></i>
+            </button>
+        </div>
+        <div id="git-status" class="bg-gray-50 rounded-lg p-4">
+            <div class="flex items-center justify-center py-8">
+                <div class="loading"></div>
+                <span class="ml-2 text-gray-500">Loading status...</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Actions -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <!-- Initialize Repository -->
+        <div class="card p-6">
+            <div class="flex items-center mb-4">
+                <div class="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center mr-3">
+                    <i class="fas fa-folder-plus text-green-600"></i>
+                </div>
+                <h3 class="text-lg font-semibold text-gray-900">Initialize Repository</h3>
+            </div>
+            <p class="text-gray-600 mb-4">Create a new Git repository in the current directory</p>
+            <button onclick="initRepository()" class="w-full btn-primary px-4 py-2 rounded-md">
+                Initialize Git
+            </button>
+        </div>
+
+        <!-- Configure User -->
+        <div class="card p-6">
+            <div class="flex items-center mb-4">
+                <div class="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center mr-3">
+                    <i class="fas fa-user text-blue-600"></i>
+                </div>
+                <h3 class="text-lg font-semibold text-gray-900">Configure User</h3>
+            </div>
+            <p class="text-gray-600 mb-4">Set up your Git user name and email</p>
+            <button onclick="showGitConfigModal()" class="w-full btn-secondary px-4 py-2 rounded-md">
+                Configure User
+            </button>
+        </div>
+
+        <!-- Add Remote -->
+        <div class="card p-6">
+            <div class="flex items-center mb-4">
+                <div class="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center mr-3">
+                    <i class="fas fa-cloud text-purple-600"></i>
+                </div>
+                <h3 class="text-lg font-semibold text-gray-900">Add Remote</h3>
+            </div>
+            <p class="text-gray-600 mb-4">Connect to a remote repository</p>
+            <button onclick="showAddRemoteModal()" class="w-full px-4 py-2 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200">
+                Add Remote
+            </button>
+        </div>
+
+        <!-- Commit Changes -->
+        <div class="card p-6">
+            <div class="flex items-center mb-4">
+                <div class="w-10 h-10 bg-yellow-100 rounded-lg flex items-center justify-center mr-3">
+                    <i class="fas fa-save text-yellow-600"></i>
+                </div>
+                <h3 class="text-lg font-semibold text-gray-900">Commit Changes</h3>
+            </div>
+            <p class="text-gray-600 mb-4">Stage and commit your changes</p>
+            <button onclick="showCommitModal()" class="w-full px-4 py-2 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200">
+                Commit Changes
+            </button>
+        </div>
+
+        <!-- Push Changes -->
+        <div class="card p-6">
+            <div class="flex items-center mb-4">
+                <div class="w-10 h-10 bg-red-100 rounded-lg flex items-center justify-center mr-3">
+                    <i class="fas fa-upload text-red-600"></i>
+                </div>
+                <h3 class="text-lg font-semibold text-gray-900">Push Changes</h3>
+            </div>
+            <p class="text-gray-600 mb-4">Push your commits to remote repository</p>
+            <button onclick="showPushModal()" class="w-full px-4 py-2 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200">
+                Push Changes
+            </button>
+        </div>
+
+        <!-- Push Patch -->
+        <div class="card p-6">
+            <div class="flex items-center mb-4">
+                <div class="w-10 h-10 bg-indigo-100 rounded-lg flex items-center justify-center mr-3">
+                    <i class="fas fa-code text-indigo-600"></i>
+                </div>
+                <h3 class="text-lg font-semibold text-gray-900">Push Patch</h3>
+            </div>
+            <p class="text-gray-600 mb-4">Push a specific patch to Git</p>
+            <button onclick="showPushPatchModal()" class="w-full px-4 py-2 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200">
+                Push Patch
+            </button>
+        </div>
+    </div>
+
+    <!-- Recent Operations -->
+    <div class="card p-6">
+        <h3 class="text-lg font-semibold text-gray-900 mb-4">Recent Operations</h3>
+        <div id="recent-operations" class="space-y-3">
+            <div class="text-center py-8 text-gray-500">
+                <i class="fas fa-history text-2xl mb-2"></i>
+                <p>No recent operations</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Git Config Modal -->
+<div id="git-config-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 hidden z-50">
+    <div class="flex items-center justify-center min-h-screen p-4">
+        <div class="bg-white rounded-lg shadow-xl max-w-md w-full">
+            <div class="flex items-center justify-between p-6 border-b">
+                <h3 class="text-lg font-semibold text-gray-900">Configure Git User</h3>
+                <button onclick="hideGitConfigModal()" class="text-gray-400 hover:text-gray-600">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <form id="git-config-form" class="p-6 space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Name</label>
+                    <input type="text" id="git-name" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500" required>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Email</label>
+                    <input type="email" id="git-email" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500" required>
+                </div>
+                <div class="flex justify-end space-x-3 pt-4">
+                    <button type="button" onclick="hideGitConfigModal()" class="px-4 py-2 text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200">
+                        Cancel
+                    </button>
+                    <button type="submit" class="btn-primary px-4 py-2 rounded-md">
+                        Configure
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Add Remote Modal -->
+<div id="add-remote-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 hidden z-50">
+    <div class="flex items-center justify-center min-h-screen p-4">
+        <div class="bg-white rounded-lg shadow-xl max-w-md w-full">
+            <div class="flex items-center justify-between p-6 border-b">
+                <h3 class="text-lg font-semibold text-gray-900">Add Remote Repository</h3>
+                <button onclick="hideAddRemoteModal()" class="text-gray-400 hover:text-gray-600">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <form id="add-remote-form" class="p-6 space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Remote Name</label>
+                    <input type="text" id="remote-name" value="origin" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500" required>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Remote URL</label>
+                    <input type="url" id="remote-url" placeholder="https://github.com/username/repo.git" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500" required>
+                </div>
+                <div class="flex justify-end space-x-3 pt-4">
+                    <button type="button" onclick="hideAddRemoteModal()" class="px-4 py-2 text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200">
+                        Cancel
+                    </button>
+                    <button type="submit" class="btn-primary px-4 py-2 rounded-md">
+                        Add Remote
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Commit Modal -->
+<div id="commit-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 hidden z-50">
+    <div class="flex items-center justify-center min-h-screen p-4">
+        <div class="bg-white rounded-lg shadow-xl max-w-md w-full">
+            <div class="flex items-center justify-between p-6 border-b">
+                <h3 class="text-lg font-semibold text-gray-900">Commit Changes</h3>
+                <button onclick="hideCommitModal()" class="text-gray-400 hover:text-gray-600">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <form id="commit-form" class="p-6 space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Commit Message</label>
+                    <textarea id="commit-message" rows="3" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500" placeholder="Enter commit message" required></textarea>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Files to Add</label>
+                    <textarea id="commit-files" rows="3" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500" placeholder="Enter file paths, one per line (or leave empty for all)"></textarea>
+                </div>
+                <div class="flex justify-end space-x-3 pt-4">
+                    <button type="button" onclick="hideCommitModal()" class="px-4 py-2 text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200">
+                        Cancel
+                    </button>
+                    <button type="submit" class="btn-primary px-4 py-2 rounded-md">
+                        Commit
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Push Modal -->
+<div id="push-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 hidden z-50">
+    <div class="flex items-center justify-center min-h-screen p-4">
+        <div class="bg-white rounded-lg shadow-xl max-w-md w-full">
+            <div class="flex items-center justify-between p-6 border-b">
+                <h3 class="text-lg font-semibold text-gray-900">Push Changes</h3>
+                <button onclick="hidePushModal()" class="text-gray-400 hover:text-gray-600">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <form id="push-form" class="p-6 space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Remote</label>
+                    <input type="text" id="push-remote" value="origin" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500" required>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Branch</label>
+                    <input type="text" id="push-branch" value="main" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500" required>
+                </div>
+                <div class="flex justify-end space-x-3 pt-4">
+                    <button type="button" onclick="hidePushModal()" class="px-4 py-2 text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200">
+                        Cancel
+                    </button>
+                    <button type="submit" class="btn-primary px-4 py-2 rounded-md">
+                        Push
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Push Patch Modal -->
+<div id="push-patch-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 hidden z-50">
+    <div class="flex items-center justify-center min-h-screen p-4">
+        <div class="bg-white rounded-lg shadow-xl max-w-md w-full">
+            <div class="flex items-center justify-between p-6 border-b">
+                <h3 class="text-lg font-semibold text-gray-900">Push Patch to Git</h3>
+                <button onclick="hidePushPatchModal()" class="text-gray-400 hover:text-gray-600">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <form id="push-patch-form" class="p-6 space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Patch ID</label>
+                    <select id="patch-select" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500" required>
+                        <option value="">Select a patch...</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Commit Message</label>
+                    <input type="text" id="patch-commit-message" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500" placeholder="Add patch: [patch-id]">
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">Remote</label>
+                        <input type="text" id="patch-remote" value="origin" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">Branch</label>
+                        <input type="text" id="patch-branch" value="main" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500">
+                    </div>
+                </div>
+                <div class="flex justify-end space-x-3 pt-4">
+                    <button type="button" onclick="hidePushPatchModal()" class="px-4 py-2 text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200">
+                        Cancel
+                    </button>
+                    <button type="submit" class="btn-primary px-4 py-2 rounded-md">
+                        Push Patch
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div> 
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="bg-white border-t border-gray-200 mt-12">
+        <div class="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
+            <div class="text-center text-sm text-gray-500">
+                <p>&copy; 2024 PatchPilot. Built with <i class="fas fa-heart text-red-500"></i> using Jekyll & Ruby.</p>
+            </div>
+        </div>
+    </footer>
+
+    <!-- JavaScript -->
+    <script>
+        // Global API configuration
+        window.API_CONFIG = {
+            baseUrl: 'http://localhost:8000',
+            endpoints: {"todos":"/todos/","patches":"/patches/","git":"/git/","generate_code":"/generate-code/","run_patch":"/run-patch/","execute_patch":"/execute-patch/","patch_status":"/patch-status/"}
+        };
+        
+        // Utility functions
+        window.utils = {
+            showNotification: function(message, type = 'info') {
+                const notification = document.createElement('div');
+                notification.className = `fixed top-4 right-4 p-4 rounded-lg shadow-lg z-50 fade-in ${
+                    type === 'success' ? 'bg-green-500 text-white' :
+                    type === 'error' ? 'bg-red-500 text-white' :
+                    type === 'warning' ? 'bg-yellow-500 text-white' :
+                    'bg-blue-500 text-white'
+                }`;
+                notification.textContent = message;
+                document.body.appendChild(notification);
+                
+                setTimeout(() => {
+                    notification.remove();
+                }, 3000);
+            },
+            
+            formatDate: function(dateString) {
+                return new Date(dateString).toLocaleString();
+            },
+            
+            debounce: function(func, wait) {
+                let timeout;
+                return function executedFunction(...args) {
+                    const later = () => {
+                        clearTimeout(timeout);
+                        func(...args);
+                    };
+                    clearTimeout(timeout);
+                    timeout = setTimeout(later, wait);
+                };
+            }
+        };
+    </script>
+    
+    <!-- Page-specific scripts -->
+    
+        
+            <script src="/assets/js/git.js"></script>
+        
+    
+</body>
+</html> 

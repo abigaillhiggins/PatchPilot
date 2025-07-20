@@ -53,10 +53,47 @@ class IsolatedEnvironment:
         """Run a Python script in the isolated environment."""
         try:
             logger.info(f"Running {script_path} in isolated environment")
+            
+            # Ensure proper Flask template structure if this is a Flask app
+            script_dir = os.path.dirname(script_path)
+            if os.path.exists(os.path.join(script_dir, "main.py")):
+                # Check if this looks like a Flask app
+                with open(os.path.join(script_dir, "main.py"), 'r') as f:
+                    content = f.read()
+                    if "from flask import" in content or "Flask(" in content:
+                        # Ensure templates directory exists
+                        templates_dir = os.path.join(script_dir, "templates")
+                        if not os.path.exists(templates_dir):
+                            os.makedirs(templates_dir, exist_ok=True)
+                        
+                        # Move template files to templates directory
+                        template_extensions = ['.html', '.jinja2', '.j2']
+                        template_files = [f for f in os.listdir(script_dir) 
+                                        if any(f.endswith(ext) for ext in template_extensions)]
+                        
+                        for template_file in template_files:
+                            src_template_path = os.path.join(script_dir, template_file)
+                            
+                            # Convert .jinja2 files to .html for Flask compatibility
+                            if template_file.endswith('.jinja2'):
+                                template_file = template_file.replace('.jinja2', '.html')
+                                logger.info(f"Converting {template_file} from .jinja2 to .html")
+                            
+                            templates_template_path = os.path.join(templates_dir, template_file)
+                            
+                            if not os.path.exists(templates_template_path):
+                                shutil.copy2(src_template_path, templates_template_path)
+                                logger.info(f"Moved {template_file} to templates directory")
+            
+            # Set environment variable to indicate patch execution mode
+            env = os.environ.copy()
+            env['PATCH_EXECUTION'] = '1'
+            
             process = subprocess.run(
                 [self.python_path, script_path],
                 capture_output=True,
-                text=True
+                text=True,
+                env=env
             )
             return (
                 process.returncode == 0,

@@ -7,7 +7,7 @@ import os
 import sys
 import argparse
 import json
-from src.generators.code_generator import CodeGenerator, CodeTask
+from generators.code_generator import CodeGenerator, CodeTask
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Generate code and save to patches directory')

@@ -9,8 +9,8 @@ from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 from datetime import datetime
 import json
-from src.core.db_utils import DatabaseManager
-from src.generators.code_generator import CodeGenerator, CodeTask
+from core.db_utils import DatabaseManager
+from generators.code_generator import CodeGenerator, CodeTask
 
 logger = logging.getLogger(__name__)
 
