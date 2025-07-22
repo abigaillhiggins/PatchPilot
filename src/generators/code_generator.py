@@ -473,6 +473,11 @@ class CodeGenerator:
                 "CRITICAL: The main.py file should contain ONLY Python code. Do NOT include project structure comments, "
                 "file listings, or requirements.txt content in the main.py file.\n\n"
             )
+            
+            # Add startApp compatibility instructions for web applications
+            if self._is_web_application_task(task):
+                prompt += self._get_web_app_compatibility_instructions()
+                
         elif task.language.lower() in ["javascript", "typescript"]:
             prompt += "Write clean, modern JavaScript/TypeScript code following standard style guidelines. Use ES6+ features where appropriate.\n\n"
         elif task.language.lower() == "java":
@@ -486,6 +491,106 @@ class CodeGenerator:
         prompt += f"Please provide the complete {task.language} implementation:\n\n"
         
         return prompt
+
+    def _is_web_application_task(self, task: CodeTask) -> bool:
+        """Detect if the task is for a web application based on description and requirements."""
+        web_keywords = [
+            'web', 'website', 'webapp', 'web app', 'flask', 'django', 'fastapi', 'streamlit', 'dash',
+            'server', 'api', 'rest', 'http', 'browser', 'frontend', 'backend', 'ui', 'interface',
+            'calculator', 'dashboard', 'form', 'html', 'css', 'javascript', 'react', 'vue', 'angular',
+            'gui', 'graphical', 'user interface', 'web interface', 'online', 'web-based'
+        ]
+        
+        description_lower = task.description.lower()
+        requirements_lower = ' '.join(task.requirements).lower()
+        
+        # Check description for web keywords
+        for keyword in web_keywords:
+            if keyword in description_lower:
+                return True
+                
+        # Check requirements for web keywords
+        for keyword in web_keywords:
+            if keyword in requirements_lower:
+                return True
+                
+        # Check for specific web frameworks in package requirements
+        web_frameworks = ['flask', 'django', 'fastapi', 'streamlit', 'dash', 'bottle', 'tornado']
+        for framework in web_frameworks:
+            if framework in task.package_requirements:
+                return True
+                
+        return False
+
+    def _get_web_app_compatibility_instructions(self) -> str:
+        """Get specific instructions for web application compatibility with startApp."""
+        return """
+=== WEB APPLICATION COMPATIBILITY REQUIREMENTS ===
+
+If this is a web application, follow these CRITICAL requirements for startApp compatibility:
+
+1. PORT CONFIGURATION:
+   - Use environment variable for port: port = int(os.environ.get('PORT', 5001))
+   - Default to port 5001 to avoid macOS AirPlay conflicts
+   - Use host='0.0.0.0' for external access
+   - Example: app.run(debug=True, host='0.0.0.0', port=port)
+
+2. FLASK APPLICATIONS:
+   - Create proper templates/ directory structure
+   - Place HTML templates in src/templates/ directory
+   - Use render_template() for serving HTML pages
+   - Include proper error handling and form processing
+   - Add a health check endpoint: @app.route('/health')
+
+3. TEMPLATE STRUCTURE:
+   - Create src/templates/ directory
+   - Use modern, responsive HTML with CSS styling
+   - Include proper form handling and validation
+   - Add user-friendly error messages and success feedback
+
+4. REQUIREMENTS.TXT:
+   - Include flask>=2.0.0 for Flask applications
+   - Include all necessary dependencies
+   - Use proper version specifications
+
+5. MAIN ENTRY POINT:
+   - Ensure main.py can be run directly: python main.py
+   - Include proper if __name__ == '__main__': block
+   - Add proper logging and error handling
+
+6. FILE STRUCTURE:
+   ```
+   src/
+   ├── main.py
+   ├── templates/
+   │   └── index.html
+   └── static/ (if needed)
+   requirements.txt
+   metadata.txt
+   ```
+
+7. EXAMPLE FLASK STRUCTURE:
+   ```python
+   from flask import Flask, render_template, request, jsonify
+   import os
+   
+   app = Flask(__name__)
+   
+   @app.route('/')
+   def index():
+       return render_template('index.html')
+   
+   @app.route('/health')
+   def health():
+       return jsonify({'status': 'healthy'})
+   
+   if __name__ == '__main__':
+       port = int(os.environ.get('PORT', 5001))
+       app.run(debug=True, host='0.0.0.0', port=port)
+   ```
+
+CRITICAL: Follow these requirements exactly to ensure startApp compatibility!
+"""
 
     def _create_simplified_prompt(self, task: CodeTask) -> str:
         """Create a simplified prompt for complex tasks that failed initial generation."""
@@ -793,55 +898,189 @@ Output the code in markdown code blocks."""
         return content
 
     def save_multiple_files(self, files: dict, patch_dir: str) -> bool:
-        """Save multiple files to the patch directory.
-        
-        Args:
-            files: Dictionary with file names as keys and file contents as values
-            patch_dir: Directory to save files in
-            
-        Returns:
-            bool: True if all files were saved successfully
-        """
+        """Save multiple files to the patch directory."""
         try:
-            for file_name, content in files.items():
-                # Determine the appropriate directory for each file type
-                if file_name == 'requirements.txt':
-                    # Save requirements.txt in the patch root directory
-                    file_path = os.path.join(patch_dir, file_name)
-                elif file_name.endswith('.py'):
-                    # Save Python files in the src directory
-                    src_dir = os.path.join(patch_dir, "src")
-                    os.makedirs(src_dir, exist_ok=True)
-                    file_path = os.path.join(src_dir, file_name)
-                elif file_name.endswith('.js') or file_name.endswith('.ts'):
-                    # Save JavaScript/TypeScript files in the src directory
-                    src_dir = os.path.join(patch_dir, "src")
-                    os.makedirs(src_dir, exist_ok=True)
-                    file_path = os.path.join(src_dir, file_name)
-                elif file_name.endswith('.json'):
-                    # Save JSON files in the config directory
-                    config_dir = os.path.join(patch_dir, "config")
-                    os.makedirs(config_dir, exist_ok=True)
-                    file_path = os.path.join(config_dir, file_name)
-                else:
-                    # Save other files in the src directory
-                    src_dir = os.path.join(patch_dir, "src")
-                    os.makedirs(src_dir, exist_ok=True)
-                    file_path = os.path.join(src_dir, file_name)
-                
-                # Ensure the directory exists
-                os.makedirs(os.path.dirname(file_path), exist_ok=True)
-                
-                # Save the file
-                with open(file_path, 'w') as f:
-                    f.write(content)
-                
-                logger.info(f"Saved file: {file_path}")
+            # Clean the files first
+            cleaned_files = self._clean_extracted_files(files)
             
+            # Save each file
+            for file_path, content in cleaned_files.items():
+                full_path = os.path.join(patch_dir, file_path)
+                
+                # Ensure directory exists
+                os.makedirs(os.path.dirname(full_path), exist_ok=True)
+                
+                # Write the file
+                with open(full_path, 'w', encoding='utf-8') as f:
+                    f.write(content)
+                    
+            # Post-generation enhancement for web applications
+            self._enhance_web_app_compatibility(patch_dir, cleaned_files)
+            
+            logger.info(f"Successfully saved {len(cleaned_files)} files to {patch_dir}")
             return True
+            
         except Exception as e:
             logger.error(f"Error saving multiple files: {str(e)}")
             return False
+
+    def _enhance_web_app_compatibility(self, patch_dir: str, files: dict) -> None:
+        """Enhance generated web applications to ensure startApp compatibility."""
+        try:
+            # Check if this is a web application
+            if not self._is_web_app_directory(patch_dir, files):
+                return
+                
+            logger.info(f"Enhancing web app compatibility for {patch_dir}")
+            
+            # Enhance main.py for proper port configuration
+            self._enhance_main_py(patch_dir)
+            
+            # Ensure proper template structure
+            self._ensure_template_structure(patch_dir)
+            
+            # Enhance requirements.txt
+            self._enhance_requirements_txt(patch_dir)
+            
+            logger.info(f"Web app compatibility enhancement completed for {patch_dir}")
+            
+        except Exception as e:
+            logger.error(f"Error enhancing web app compatibility: {str(e)}")
+
+    def _is_web_app_directory(self, patch_dir: str, files: dict) -> bool:
+        """Check if the generated code is a web application."""
+        # Check for Flask/Django/FastAPI imports in main.py
+        main_py_path = os.path.join(patch_dir, "src", "main.py")
+        if os.path.exists(main_py_path):
+            try:
+                with open(main_py_path, 'r') as f:
+                    content = f.read().lower()
+                    web_frameworks = ['flask', 'django', 'fastapi', 'streamlit', 'dash']
+                    for framework in web_frameworks:
+                        if framework in content:
+                            return True
+            except Exception:
+                pass
+                
+        # Check for web-related files
+        web_files = ['templates', 'static', 'index.html', 'app.py', 'server.py']
+        for file_path in files.keys():
+            for web_file in web_files:
+                if web_file in file_path.lower():
+                    return True
+                    
+        return False
+
+    def _enhance_main_py(self, patch_dir: str) -> None:
+        """Enhance main.py for proper port configuration and startApp compatibility."""
+        main_py_path = os.path.join(patch_dir, "src", "main.py")
+        if not os.path.exists(main_py_path):
+            return
+            
+        try:
+            with open(main_py_path, 'r') as f:
+                content = f.read()
+                
+            # Check if it's a Flask app
+            if 'flask' in content.lower() and 'app.run(' in content:
+                # Replace port configuration
+                import re
+                
+                # Replace any hardcoded port with environment variable
+                content = re.sub(
+                    r'app\.run\([^)]*port\s*=\s*\d+[^)]*\)',
+                    "app.run(debug=True, host='0.0.0.0', port=port)",
+                    content
+                )
+                
+                # Add port import if not present
+                if 'import os' not in content:
+                    content = content.replace('from flask import', 'import os\nfrom flask import')
+                elif 'import os' in content and 'port = int(os.environ.get(' not in content:
+                    # Add port configuration before app.run
+                    content = re.sub(
+                        r'(if __name__ == [\'"]__main__[\'"]:)',
+                        r'\1\n    port = int(os.environ.get(\'PORT\', 5001))',
+                        content
+                    )
+                
+                # Add health check endpoint if not present
+                if '@app.route(\'/health\')' not in content:
+                    health_endpoint = '''
+@app.route('/health')
+def health():
+    return jsonify({'status': 'healthy', 'message': 'Flask app is running!'})
+'''
+                    # Insert before the if __name__ block
+                    content = re.sub(
+                        r'(if __name__ == [\'"]__main__[\'"]:)',
+                        f'{health_endpoint}\n\\1',
+                        content
+                    )
+                    
+                    # Add jsonify import if not present
+                    if 'jsonify' not in content and 'from flask import' in content:
+                        content = re.sub(
+                            r'from flask import ([^)]+)',
+                            r'from flask import \1, jsonify',
+                            content
+                        )
+                
+                # Write enhanced content
+                with open(main_py_path, 'w') as f:
+                    f.write(content)
+                    
+                logger.info(f"Enhanced main.py for startApp compatibility in {patch_dir}")
+                
+        except Exception as e:
+            logger.error(f"Error enhancing main.py: {str(e)}")
+
+    def _ensure_template_structure(self, patch_dir: str) -> None:
+        """Ensure proper template structure for Flask applications."""
+        src_dir = os.path.join(patch_dir, "src")
+        templates_dir = os.path.join(src_dir, "templates")
+        
+        # Create templates directory if it doesn't exist
+        if not os.path.exists(templates_dir):
+            os.makedirs(templates_dir, exist_ok=True)
+            
+        # Check if there are HTML files in src directory that should be moved to templates
+        if os.path.exists(src_dir):
+            for file in os.listdir(src_dir):
+                if file.endswith('.html') and file != 'templates':
+                    src_file = os.path.join(src_dir, file)
+                    template_file = os.path.join(templates_dir, file)
+                    
+                    # Move HTML files to templates directory
+                    if not os.path.exists(template_file):
+                        import shutil
+                        shutil.move(src_file, template_file)
+                        logger.info(f"Moved {file} to templates directory in {patch_dir}")
+
+    def _enhance_requirements_txt(self, patch_dir: str) -> None:
+        """Enhance requirements.txt to ensure Flask is included."""
+        requirements_path = os.path.join(patch_dir, "requirements.txt")
+        
+        try:
+            if os.path.exists(requirements_path):
+                with open(requirements_path, 'r') as f:
+                    content = f.read()
+                    
+                # Check if Flask is already included
+                if 'flask' not in content.lower():
+                    # Add Flask to requirements
+                    flask_line = 'flask>=2.0.0\n'
+                    with open(requirements_path, 'a') as f:
+                        f.write(flask_line)
+                    logger.info(f"Added Flask to requirements.txt in {patch_dir}")
+            else:
+                # Create requirements.txt with Flask
+                with open(requirements_path, 'w') as f:
+                    f.write('flask>=2.0.0\n')
+                logger.info(f"Created requirements.txt with Flask in {patch_dir}")
+                
+        except Exception as e:
+            logger.error(f"Error enhancing requirements.txt: {str(e)}")
 
     def save_code(self, generated_code: GeneratedCode) -> bool:
         """Save the generated code to file (legacy method)."""

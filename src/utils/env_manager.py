@@ -48,6 +48,65 @@ class IsolatedEnvironment:
         except subprocess.CalledProcessError as e:
             logger.error(f"Failed to install requirements: {e.stderr}")
             return False
+    
+    def _detect_matplotlib_usage(self, script_path: str) -> bool:
+        """Detect if the script uses matplotlib."""
+        try:
+            with open(script_path, 'r') as f:
+                content = f.read().lower()
+                return any(keyword in content for keyword in [
+                    'import matplotlib',
+                    'from matplotlib',
+                    'matplotlib.pyplot',
+                    'plt.show',
+                    'plt.figure',
+                    'plt.plot',
+                    'plt.hist'
+                ])
+        except Exception:
+            return False
+    
+    def _create_matplotlib_wrapper(self, script_path: str) -> str:
+        """Create a wrapper script that configures matplotlib for interactive or headless environment."""
+        wrapper_content = f'''#!/usr/bin/env python3
+import os
+import sys
+
+# Simple environment detection for matplotlib
+def can_display_gui():
+    """Check if we can display GUI windows."""
+    # Check for display environment variables
+    if os.environ.get('DISPLAY') or os.environ.get('WAYLAND_DISPLAY'):
+        return True
+    
+    # On macOS, we can usually display GUI
+    if sys.platform == 'darwin':
+        return True
+    
+    return False
+
+# Set matplotlib backend
+if can_display_gui():
+    try:
+        os.environ['MPLBACKEND'] = 'TkAgg'
+        print("Running in interactive environment - using TkAgg backend")
+        print("Plot window should appear - close it to continue")
+    except:
+        os.environ['MPLBACKEND'] = 'Agg'
+        print("Interactive backend not available - saving plot to file")
+else:
+    os.environ['MPLBACKEND'] = 'Agg'
+    print("Running in headless environment - saving plot to file")
+
+# Import and run the original script
+exec(open(r'{script_path}').read())
+'''
+        
+        wrapper_path = script_path + '.wrapper.py'
+        with open(wrapper_path, 'w') as f:
+            f.write(wrapper_content)
+        
+        return wrapper_path
             
     def run_script(self, script_path: str) -> tuple[bool, str, str, int]:
         """Run a Python script in the isolated environment."""
@@ -85,16 +144,49 @@ class IsolatedEnvironment:
                                 shutil.copy2(src_template_path, templates_template_path)
                                 logger.info(f"Moved {template_file} to templates directory")
             
-            # Set environment variable to indicate patch execution mode
+            # Check if matplotlib is used and create wrapper if needed
+            uses_matplotlib = self._detect_matplotlib_usage(script_path)
+            actual_script_path = script_path
+            
+            if uses_matplotlib:
+                logger.info("Matplotlib detected - creating headless environment wrapper")
+                actual_script_path = self._create_matplotlib_wrapper(script_path)
+            
+            # Set up environment for execution
             env = os.environ.copy()
-            env['PATCH_EXECUTION'] = '1'
+            
+            # Only set PATCH_EXECUTION for non-interactive matplotlib scripts
+            if uses_matplotlib:
+                # Check if we can support interactive display
+                display_vars = ['DISPLAY', 'WAYLAND_DISPLAY', 'MIR_SOCKET']
+                has_display = any(env.get(var) for var in display_vars)
+                is_macos = sys.platform == 'darwin'
+                
+                if has_display or is_macos:
+                    # Interactive environment - don't set PATCH_EXECUTION
+                    logger.info("Matplotlib detected - attempting interactive display")
+                else:
+                    # Headless environment
+                    env['PATCH_EXECUTION'] = '1'
+                    logger.info("Matplotlib detected - using headless mode")
+            else:
+                # Non-matplotlib script
+                env['PATCH_EXECUTION'] = '1'
             
             process = subprocess.run(
-                [self.python_path, script_path],
+                [self.python_path, actual_script_path],
                 capture_output=True,
                 text=True,
                 env=env
             )
+            
+            # Clean up wrapper if created
+            if uses_matplotlib and actual_script_path != script_path:
+                try:
+                    os.remove(actual_script_path)
+                except:
+                    pass
+            
             return (
                 process.returncode == 0,
                 process.stdout,

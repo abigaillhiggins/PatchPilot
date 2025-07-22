@@ -106,17 +106,13 @@ function renderPatches() {
                     <button onclick="executePatch('${patch.patch_id}')" class="btn-secondary px-3 py-2 rounded-md text-sm whitespace-nowrap">
                         <i class="fas fa-play mr-1"></i>Execute
                     </button>
-                    ${patch.app_url ? `
-                    <button onclick="startApp('${patch.patch_id}')" class="px-3 py-2 text-green-600 bg-green-100 rounded-md text-sm hover:bg-green-200 whitespace-nowrap">
-                        <i class="fas fa-globe mr-1"></i>Start App
-                    </button>
-                    ` : ''}
                     <button onclick="openConsoleForPatch('${patch.patch_id}')" class="px-3 py-2 text-blue-600 bg-blue-100 rounded-md text-sm hover:bg-blue-200 whitespace-nowrap">
                         <i class="fas fa-terminal mr-1"></i>Console
                     </button>
                     <button onclick="deletePatch('${patch.patch_id}')" class="px-3 py-2 text-red-600 bg-red-100 rounded-md text-sm hover:bg-red-200 whitespace-nowrap">
                         <i class="fas fa-trash mr-1"></i>Delete
                     </button>
+                    ${patch.is_web_app ? `<button onclick="startWebApp('${patch.patch_id}')" class="btn-primary px-3 py-2 rounded-md text-sm whitespace-nowrap"><i class="fas fa-play mr-1"></i>Start Web App</button>` : ''}
                 </div>
             </div>
         </div>
@@ -290,15 +286,15 @@ async function regenerateCode(patchId) {
         addConsoleMessage('Saving regenerated files...', 'code');
         await new Promise(resolve => setTimeout(resolve, 1000));
 
-        // Call the regenerate endpoint
-        const response = await fetch(`${window.API_CONFIG.baseUrl}/regenerate-patch/`, {
+        // Call the execute endpoint with analyze=true for regeneration
+        const response = await fetch(`${window.API_CONFIG.baseUrl}${window.API_CONFIG.endpoints.execute_patch}`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify({
                 patch_id: patchId,
-                reason: 'User requested regeneration'
+                analyze: true
             })
         });
 
@@ -387,7 +383,7 @@ function hidePatchModal() {
 }
 
 async function executePatch(patchId) {
-    if (!currentPatch) return;
+    if (!patchId) return;
 
     try {
         // Show console and update status
@@ -425,12 +421,17 @@ async function executePatch(patchId) {
             },
             body: JSON.stringify({
                 patch_id: patchId,
-                analyze: true
+                analyze: false
             })
         });
 
         if (response.ok) {
             const result = await response.json();
+            
+            // Debug logging
+            console.log('API Response:', result);
+            console.log('Status:', result.status);
+            console.log('Success check:', result.status === 'executed' || result.success);
             
             // Show execution output in console
             if (result.execution_output) {
@@ -476,15 +477,23 @@ async function executePatch(patchId) {
 }
 
 function displayExecutionResults(result) {
+    console.log('displayExecutionResults called with:', result);
+    
     const resultsSection = document.getElementById('execution-results');
     resultsSection.classList.remove('hidden');
 
     // Update status
     const statusElement = document.getElementById('execution-status');
-    if (result.success) {
+    console.log('Status check:', result.status === 'executed' || result.success);
+    console.log('Result status:', result.status);
+    console.log('Result success:', result.success);
+    
+    if (result.status === 'executed' || result.success) {
+        console.log('Setting status to Success');
         statusElement.className = 'inline-flex items-center px-2 py-1 rounded-full text-xs font-medium success-badge';
         statusElement.innerHTML = '<i class="fas fa-check mr-1"></i>Success';
     } else {
+        console.log('Setting status to Failed');
         statusElement.className = 'inline-flex items-center px-2 py-1 rounded-full text-xs font-medium error-badge';
         statusElement.innerHTML = '<i class="fas fa-times mr-1"></i>Failed';
     }
@@ -730,12 +739,15 @@ async function startWebApp(patchId) {
         if (response.ok) {
             const result = await response.json();
             addConsoleMessage(`✅ Web application started successfully!`, 'success');
-            addConsoleMessage(`🔗 Access URL: ${result.url}`, 'info');
+            addConsoleMessage(`🔗 Access URL: http://localhost:[PORT]`, 'info');
             addConsoleMessage(`📱 Framework: ${result.framework}`, 'info');
+            
+            // Open the app in a new window using the actual URL
+            window.open(result.url, '_blank');
             
             // Update status
             checkWebAppStatus(patchId);
-            window.utils.showNotification('Web application started successfully!', 'success');
+            window.utils.showNotification('Web application started and opened in new window!', 'success');
         } else {
             const error = await response.json();
             addConsoleMessage(`❌ Failed to start web app: ${error.detail}`, 'error');
@@ -786,48 +798,141 @@ function refreshPatches() {
     loadPatches();
 } 
 
-async function startApp(patchId) {
-    const patch = patches.find(p => p.patch_id === patchId);
-    if (!patch) {
-        window.utils.showNotification('Patch not found', 'error');
+ 
+
+// Image display functions
+async function displayPatchImages(patchId) {
+    try {
+        console.log('displayPatchImages called with patchId:', patchId);
+        console.log('currentPatch:', currentPatch);
+        
+        // Check if currentPatch exists and has patch_id
+        if (currentPatch) {
+            console.log('currentPatch.patch_id:', currentPatch.patch_id);
+        }
+        
+            if (!currentPatch) {
+        console.error('currentPatch is not defined');
+        window.utils.showNotification('Please select a patch first', 'error');
         return;
     }
     
-    // For Flask calculator, start the server and open in new window
-    if (patchId.includes('calculator') || patchId.includes('flask')) {
-        try {
-            addConsoleMessage('🚀 Starting Flask web server...', 'info');
+    const targetPatchId = currentPatch.patch_id;
+    if (!targetPatchId) {
+        console.error('No patch ID available in currentPatch');
+        window.utils.showNotification('No patch ID available', 'error');
+        return;
+    }
+        // Show the modal
+        const modal = document.getElementById('image-display-modal');
+        modal.classList.remove('hidden');
+        
+        // Show loading state
+        document.getElementById('image-loading').classList.remove('hidden');
+        document.getElementById('image-content').classList.add('hidden');
+        
+        // Fetch images for the patch
+        const apiUrl = `${window.API_CONFIG.baseUrl}${window.API_CONFIG.endpoints.patch_images}${targetPatchId}`;
+        console.log('Fetching images from:', apiUrl);
+        const response = await fetch(apiUrl);
+        
+        if (response.ok) {
+            const data = await response.json();
+            const images = data.images || [];
             
-            // Start the Flask server in the background
-            const response = await fetch(`${window.API_CONFIG.baseUrl}/start-web-app/`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    patch_id: patchId
-                })
-            });
-
-            if (response.ok) {
-                const result = await response.json();
-                addConsoleMessage(`✅ Flask server started successfully!`, 'success');
-                addConsoleMessage(`🔗 Server URL: ${result.url}`, 'info');
+            // Hide loading, show content
+            document.getElementById('image-loading').classList.add('hidden');
+            document.getElementById('image-content').classList.remove('hidden');
+            
+            if (images.length > 0) {
+                // Show images
+                document.getElementById('no-images').classList.add('hidden');
+                document.getElementById('image-list').classList.remove('hidden');
                 
-                // Open the app in a new window
-                window.open(result.url, '_blank');
-                window.utils.showNotification('Flask app started and opened in new window!', 'success');
+                const imageList = document.getElementById('image-list');
+                imageList.innerHTML = images.map(image => `
+                    <div class="border border-gray-200 rounded-lg p-4">
+                        <div class="flex items-center justify-between mb-3">
+                            <h4 class="text-lg font-medium text-gray-900">${image.filename}</h4>
+                            <a href="${window.API_CONFIG.baseUrl}${image.url}" target="_blank" 
+                               class="text-blue-600 hover:text-blue-800 text-sm">
+                                <i class="fas fa-external-link-alt mr-1"></i>Open in new tab
+                            </a>
+                        </div>
+                        <div class="bg-gray-50 rounded-lg p-4">
+                            <img src="${window.API_CONFIG.baseUrl}${image.url}" 
+                                 alt="${image.filename}" 
+                                 class="w-full h-auto max-h-96 object-contain rounded-lg shadow-sm"
+                                 onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
+                            <div class="hidden text-center py-8 text-gray-500">
+                                <i class="fas fa-exclamation-triangle text-2xl mb-2"></i>
+                                <p>Image could not be loaded</p>
+                            </div>
+                        </div>
+                        <div class="mt-2 text-sm text-gray-500">
+                            <span class="font-mono">${image.path}</span>
+                        </div>
+                    </div>
+                `).join('');
             } else {
-                const error = await response.json();
-                addConsoleMessage(`❌ Failed to start Flask server: ${error.detail}`, 'error');
-                window.utils.showNotification(`Failed to start Flask server: ${error.detail}`, 'error');
+                // Show no images message
+                document.getElementById('image-list').classList.add('hidden');
+                document.getElementById('no-images').classList.remove('hidden');
             }
-        } catch (error) {
-            console.error('Error starting Flask server:', error);
-            addConsoleMessage(`❌ Error starting Flask server: ${error.message}`, 'error');
-            window.utils.showNotification('Failed to start Flask server', 'error');
+        } else {
+            // Handle error
+            document.getElementById('image-loading').classList.add('hidden');
+            document.getElementById('image-content').classList.remove('hidden');
+            document.getElementById('image-list').classList.add('hidden');
+            document.getElementById('no-images').classList.remove('hidden');
+            
+            const noImagesDiv = document.getElementById('no-images');
+            noImagesDiv.innerHTML = `
+                <div class="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <i class="fas fa-exclamation-triangle text-red-600 text-2xl"></i>
+                </div>
+                <h3 class="text-lg font-medium text-gray-900 mb-2">Error loading images</h3>
+                <p class="text-gray-500">Failed to load images for this patch. Please try again.</p>
+            `;
         }
+    } catch (error) {
+        console.error('Error displaying patch images:', error);
+        
+        // Show error state
+        document.getElementById('image-loading').classList.add('hidden');
+        document.getElementById('image-content').classList.remove('hidden');
+        document.getElementById('image-list').classList.add('hidden');
+        document.getElementById('no-images').classList.remove('hidden');
+        
+        const noImagesDiv = document.getElementById('no-images');
+        noImagesDiv.innerHTML = `
+            <div class="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <i class="fas fa-exclamation-triangle text-red-600 text-2xl"></i>
+            </div>
+            <h3 class="text-lg font-medium text-gray-900 mb-2">Error loading images</h3>
+            <p class="text-gray-500">An error occurred while loading images: ${error.message}</p>
+        `;
+        
+        window.utils.showNotification('Failed to load images', 'error');
+    }
+}
+
+function hideImageDisplayModal() {
+    const modal = document.getElementById('image-display-modal');
+    modal.classList.add('hidden');
+}
+
+// Test function for debugging
+function testDisplayImages() {
+    console.log('Testing display images function...');
+    console.log('Available patches:', patches);
+    console.log('Current patch:', currentPatch);
+    
+    if (patches && patches.length > 0) {
+        const testPatchId = patches[0].patch_id;
+        console.log('Testing with patch ID:', testPatchId);
+        displayPatchImages(testPatchId);
     } else {
-        window.utils.showNotification('Web app not available for this patch', 'warning');
+        console.log('No patches available');
     }
 } 

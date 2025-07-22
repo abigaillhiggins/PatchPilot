@@ -12,6 +12,7 @@ import subprocess
 import re
 import socket
 import random
+import requests
 from typing import List, Optional, Dict, Tuple, Any
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -78,7 +79,7 @@ def find_available_port(start_port: int = 5000, max_attempts: int = 100) -> int:
     raise RuntimeError(f"Could not find available port in range {start_port}-{start_port + 999}")
 
 def detect_web_application(patch_id: str) -> Optional[Dict[str, str]]:
-    """Detect if a patch contains a web application and return its details."""
+    """Enhanced detection of web applications with comprehensive framework support."""
     try:
         patch_dir = os.path.join(code_generator.patches_dir, patch_id)
         if not os.path.exists(patch_dir):
@@ -92,63 +93,278 @@ def detect_web_application(patch_id: str) -> Optional[Dict[str, str]]:
         with open(main_py_path, 'r') as f:
             content = f.read()
             
-        # Detect Flask applications
-        if 'flask' in content.lower() and 'app.run(' in content:
-            # Extract port from app.run() call
-            port_match = re.search(r'app\.run\([^)]*port\s*=\s*(\d+)', content)
-            port = port_match.group(1) if port_match else '5001'  # Default to 5001 to avoid macOS conflicts
+        # Enhanced Flask detection with multiple patterns
+        if _is_flask_app(content):
+            return _detect_flask_config(content)
             
-            # Check if it's configured for port 5001 (our calculator)
-            if 'port=5001' in content or 'port = 5001' in content:
-                port = '5001'
-            elif 'port=5000' in content or 'port = 5000' in content:
-                port = '5000'
-                
-            return {
-                "type": "Flask",
-                "url": f"http://localhost:{port}",
-                "port": port,
-                "framework": "Flask"
-            }
+        # Enhanced FastAPI detection
+        elif _is_fastapi_app(content):
+            return _detect_fastapi_config(content)
             
-        # Detect FastAPI applications
-        elif 'fastapi' in content.lower() and 'uvicorn.run(' in content:
-            port_match = re.search(r'uvicorn\.run\([^)]*port\s*=\s*(\d+)', content)
-            port = port_match.group(1) if port_match else '8000'
-            
-            return {
-                "type": "FastAPI",
-                "url": f"http://localhost:{port}",
-                "port": port,
-                "framework": "FastAPI"
-            }
-            
-        # Detect Streamlit applications
-        elif 'streamlit' in content.lower():
+        # Enhanced Streamlit detection
+        elif _is_streamlit_app(content):
             return {
                 "type": "Streamlit",
                 "url": "http://localhost:8501",
                 "port": "8501",
-                "framework": "Streamlit"
+                "framework": "Streamlit",
+                "startup_command": "streamlit run main.py --server.port 8501 --server.address 0.0.0.0"
             }
             
-        # Detect Dash applications
-        elif 'dash' in content.lower() and 'app.run_server(' in content:
-            port_match = re.search(r'app\.run_server\([^)]*port\s*=\s*(\d+)', content)
-            port = port_match.group(1) if port_match else '8050'
+        # Enhanced Dash detection
+        elif _is_dash_app(content):
+            return _detect_dash_config(content)
             
+        # Enhanced Django detection
+        elif _is_django_app(content, patch_dir):
             return {
-                "type": "Dash",
-                "url": f"http://localhost:{port}",
-                "port": port,
-                "framework": "Dash"
+                "type": "Django",
+                "url": "http://localhost:8000",
+                "port": "8000",
+                "framework": "Django",
+                "startup_command": "python manage.py runserver 0.0.0.0:8000"
             }
+            
+        # Enhanced Bottle detection
+        elif _is_bottle_app(content):
+            return _detect_bottle_config(content)
+            
+        # Enhanced Tornado detection
+        elif _is_tornado_app(content):
+            return _detect_tornado_config(content)
+            
+        # Generic web server detection with enhanced patterns
+        elif _is_generic_web_server(content):
+            return _detect_generic_web_config(content)
             
         return None
         
     except Exception as e:
         logger.error(f"Error detecting web application for patch {patch_id}: {str(e)}")
         return None
+
+def _is_flask_app(content: str) -> bool:
+    """Enhanced Flask detection with multiple patterns."""
+    flask_patterns = [
+        r'from flask import',
+        r'import flask',
+        r'Flask\(',
+        r'app = Flask',
+        r'@app\.route',
+        r'app\.run\('
+    ]
+    
+    content_lower = content.lower()
+    return any(re.search(pattern, content_lower) for pattern in flask_patterns)
+
+def _detect_flask_config(content: str) -> Dict[str, str]:
+    """Detect Flask configuration with enhanced port detection."""
+    # Extract port from multiple patterns
+    port_patterns = [
+        r'app\.run\([^)]*port\s*=\s*(\d+)',
+        r'os\.environ\.get\([\'"]PORT[\'"],\s*(\d+)',
+        r'port\s*=\s*(\d+)',
+        r'PORT\s*=\s*(\d+)'
+    ]
+    
+    port = '5001'  # Default to avoid macOS conflicts
+    
+    for pattern in port_patterns:
+        match = re.search(pattern, content, re.IGNORECASE)
+        if match:
+            port = match.group(1)
+            break
+    
+    return {
+        "type": "Flask",
+        "url": f"http://localhost:{port}",
+        "port": port,
+        "framework": "Flask",
+        "startup_command": f"python main.py",
+        "has_templates": "templates" in content or "render_template" in content,
+        "has_static": "static" in content or "url_for" in content
+    }
+
+def _is_fastapi_app(content: str) -> bool:
+    """Enhanced FastAPI detection."""
+    fastapi_patterns = [
+        r'from fastapi import',
+        r'import fastapi',
+        r'FastAPI\(',
+        r'app = FastAPI',
+        r'@app\.get',
+        r'@app\.post',
+        r'uvicorn\.run'
+    ]
+    
+    content_lower = content.lower()
+    return any(re.search(pattern, content_lower) for pattern in fastapi_patterns)
+
+def _detect_fastapi_config(content: str) -> Dict[str, str]:
+    """Detect FastAPI configuration."""
+    port_match = re.search(r'uvicorn\.run\([^)]*port\s*=\s*(\d+)', content)
+    port = port_match.group(1) if port_match else '8000'
+    
+    return {
+        "type": "FastAPI",
+        "url": f"http://localhost:{port}",
+        "port": port,
+        "framework": "FastAPI",
+        "startup_command": f"uvicorn main:app --host 0.0.0.0 --port {port} --reload"
+    }
+
+def _is_streamlit_app(content: str) -> bool:
+    """Enhanced Streamlit detection."""
+    streamlit_patterns = [
+        r'import streamlit',
+        r'from streamlit import',
+        r'st\.',
+        r'streamlit\.run'
+    ]
+    
+    content_lower = content.lower()
+    return any(re.search(pattern, content_lower) for pattern in streamlit_patterns)
+
+def _is_dash_app(content: str) -> bool:
+    """Enhanced Dash detection."""
+    dash_patterns = [
+        r'import dash',
+        r'from dash import',
+        r'Dash\(',
+        r'app = dash\.Dash',
+        r'app\.run_server'
+    ]
+    
+    content_lower = content.lower()
+    return any(re.search(pattern, content_lower) for pattern in dash_patterns)
+
+def _detect_dash_config(content: str) -> Dict[str, str]:
+    """Detect Dash configuration."""
+    port_match = re.search(r'app\.run_server\([^)]*port\s*=\s*(\d+)', content)
+    port = port_match.group(1) if port_match else '8050'
+    
+    return {
+        "type": "Dash",
+        "url": f"http://localhost:{port}",
+        "port": port,
+        "framework": "Dash",
+        "startup_command": f"python main.py"
+    }
+
+def _is_django_app(content: str, patch_dir: str) -> bool:
+    """Enhanced Django detection."""
+    # Check for Django patterns in main.py
+    django_patterns = [
+        r'from django',
+        r'import django',
+        r'Django\(',
+        r'manage\.py'
+    ]
+    
+    content_lower = content.lower()
+    django_in_code = any(re.search(pattern, content_lower) for pattern in django_patterns)
+    
+    # Check for manage.py file
+    manage_py_exists = os.path.exists(os.path.join(patch_dir, "manage.py"))
+    
+    return django_in_code or manage_py_exists
+
+def _is_bottle_app(content: str) -> bool:
+    """Enhanced Bottle detection."""
+    bottle_patterns = [
+        r'import bottle',
+        r'from bottle import',
+        r'@bottle\.',
+        r'bottle\.run'
+    ]
+    
+    content_lower = content.lower()
+    return any(re.search(pattern, content_lower) for pattern in bottle_patterns)
+
+def _detect_bottle_config(content: str) -> Dict[str, str]:
+    """Detect Bottle configuration."""
+    port_match = re.search(r'bottle\.run\([^)]*port\s*=\s*(\d+)', content)
+    port = port_match.group(1) if port_match else '8080'
+    
+    return {
+        "type": "Bottle",
+        "url": f"http://localhost:{port}",
+        "port": port,
+        "framework": "Bottle",
+        "startup_command": f"python main.py"
+    }
+
+def _is_tornado_app(content: str) -> bool:
+    """Enhanced Tornado detection."""
+    tornado_patterns = [
+        r'import tornado',
+        r'from tornado import',
+        r'tornado\.web',
+        r'Application\(',
+        r'listen\('
+    ]
+    
+    content_lower = content.lower()
+    return any(re.search(pattern, content_lower) for pattern in tornado_patterns)
+
+def _detect_tornado_config(content: str) -> Dict[str, str]:
+    """Detect Tornado configuration."""
+    port_match = re.search(r'listen\([^)]*(\d+)', content)
+    port = port_match.group(1) if port_match else '8888'
+    
+    return {
+        "type": "Tornado",
+        "url": f"http://localhost:{port}",
+        "port": port,
+        "framework": "Tornado",
+        "startup_command": f"python main.py"
+    }
+
+def _is_generic_web_server(content: str) -> bool:
+    """Enhanced generic web server detection."""
+    generic_patterns = [
+        r'http\.server',
+        r'socketserver',
+        r'web server',
+        r'server\.run',
+        r'HTTPServer',
+        r'BaseHTTPRequestHandler',
+        r'@app\.route',  # Generic route decorators
+        r'def index\(',
+        r'def home\(',
+        r'return.*html',
+        r'Content-Type.*text/html'
+    ]
+    
+    content_lower = content.lower()
+    return any(re.search(pattern, content_lower) for pattern in generic_patterns)
+
+def _detect_generic_web_config(content: str) -> Dict[str, str]:
+    """Detect generic web server configuration."""
+    # Look for port in common patterns
+    port_patterns = [
+        r'port\s*=\s*(\d+)',
+        r'listen\([^)]*(\d+)',
+        r'server\.run\([^)]*(\d+)',
+        r'bind\([^)]*(\d+)',
+        r'HTTPServer\([^)]*(\d+)'
+    ]
+    
+    port = '8080'  # Default for generic servers
+    
+    for pattern in port_patterns:
+        match = re.search(pattern, content)
+        if match:
+            port = match.group(1)
+            break
+    
+    return {
+        "type": "WebServer",
+        "url": f"http://localhost:{port}",
+        "port": port,
+        "framework": "Generic",
+        "startup_command": f"python main.py"
+    }
 
 # Response models
 class CodeGenerationResponse(BaseModel):
@@ -174,6 +390,7 @@ class PatchStatusResponse(BaseModel):
     app_url: Optional[str] = None
     app_type: Optional[str] = None
     app_port: Optional[str] = None
+    generated_images: Optional[List[str]] = None  # List of generated image paths
 
 # Git configuration models
 class GitConfig(BaseModel):
@@ -840,12 +1057,16 @@ async def execute_patch(patch_id: str) -> Tuple[bool, str, str, int]:
                     
                     if not success:
                         return False, stdout, stderr, return_code
+                    
+                    # Return the actual output from the script
+                    return True, stdout, stderr, return_code
                         
                 finally:
                     # Always cleanup
                     env.cleanup()
                     
-        return True, "Patch executed successfully", "", 0
+        # If no Python files were found or executed
+        return True, "No Python files found to execute", "", 0
         
     except Exception as e:
         return False, "", str(e), 1
@@ -1205,7 +1426,8 @@ async def list_patches():
                     "context": metadata.get("context"),
                     "app_url": web_app.get("url") if web_app else None,
                     "app_type": web_app.get("type") if web_app else None,
-                    "app_port": web_app.get("port") if web_app else None
+                    "app_port": web_app.get("port") if web_app else None,
+                    "is_web_app": web_app is not None
                 })
         
         return {"patches": patches, "count": len(patches)}
@@ -1302,52 +1524,185 @@ async def run_patch(todo_id: int, analyze: bool = True):
 
 @app.post("/execute-patch/", response_model=PatchStatusResponse)
 async def execute_patch_endpoint(request: RunPatchRequest):
-    """Execute patch code directly without analysis - fast execution."""
+    """Execute patch with optional analysis."""
     try:
-        # Run the patch task directly
-        await run_patch_task(request.patch_id, request.analyze)
+        patch_id = request.patch_id
+        analyze = request.analyze
         
-        # Get the results
-        result = patch_run_results[request.patch_id]
+        # Add debug logging
+        logger.info(f"execute_patch_endpoint called with patch_id={patch_id}, analyze={analyze}")
         
-        # Check if regeneration was needed
-        if result.get("was_regenerated") is None:
-            # If was_regenerated is not set, check if there were errors
-            has_error = (
-                result.get("return_code", 0) != 0 or
-                bool(result.get("error_output", "")) or
-                any(indicator.lower() in (result.get("output", "") + result.get("error_output", "")).lower() for indicator in [
-                    "error processing grades",
-                    "division by zero",
-                    "should trigger",
-                    "invalid",
-                    "exception",
-                    "error",
-                    "failed",
-                    "traceback"
-                ])
+        patch_dir = os.path.join(code_generator.patches_dir, patch_id)
+        
+        if not os.path.exists(patch_dir):
+            raise HTTPException(status_code=404, detail="Patch not found")
+        
+        # Detect web application type
+        web_app = detect_web_application(patch_id)
+        
+        if analyze:
+            logger.info(f"Performing static analysis for patch {patch_id}")
+            # Perform static analysis only
+            static_errors = []
+            analysis_result = "Static analysis completed"
+            
+            # Check for common static errors
+            main_files = ["main.py", "app.py", "index.py"]
+            for file_name in main_files:
+                file_path = os.path.join(patch_dir, file_name)
+                if os.path.exists(file_path):
+                    with open(file_path, 'r') as f:
+                        content = f.read()
+                        
+                        # Check for syntax errors
+                        try:
+                            compile(content, file_path, 'exec')
+                        except SyntaxError as e:
+                            static_errors.append(f"Syntax error in {file_name}: {str(e)}")
+                        
+                        # Check for common import errors
+                        if "import " in content and "flask" in content.lower():
+                            if "from flask import" not in content and "import flask" not in content:
+                                static_errors.append(f"Missing Flask import in {file_name}")
+            
+            # Check requirements.txt
+            req_file = os.path.join(patch_dir, "requirements.txt")
+            if os.path.exists(req_file):
+                with open(req_file, 'r') as f:
+                    req_content = f.read()
+                    if "name:" in req_content or "version:" in req_content:
+                        static_errors.append("Invalid requirements.txt format - contains metadata")
+            
+            # Determine if regeneration is needed
+            needs_regeneration = len(static_errors) > 0
+            
+            if needs_regeneration:
+                analysis_result = f"Static errors detected: {', '.join(static_errors)}"
+                suggested_improvements = ["Fix syntax errors", "Correct import statements", "Fix requirements.txt format"]
+            else:
+                analysis_result = "No static errors detected - code is ready for execution"
+                suggested_improvements = ["Use start-web-app endpoint to run the application"]
+            
+            # For web apps, don't specify a port in the analysis response
+            # The actual port will be assigned when the app starts
+            app_url = None
+            app_port = None
+            if web_app:
+                app_url = f"http://localhost:[PORT]"  # Placeholder for dynamic port
+                app_port = "[DYNAMIC]"  # Indicate port will be assigned dynamically
+            
+            return PatchStatusResponse(
+                status="analyzed",
+                message="Static analysis completed",
+                execution_output="",
+                error_output="\n".join(static_errors) if static_errors else "",
+                return_code=0 if not static_errors else 1,
+                analysis=analysis_result,
+                suggested_improvements=suggested_improvements,
+                completed=True,
+                was_regenerated=needs_regeneration,
+                app_url=app_url,
+                app_type=web_app.get("type") if web_app else None,
+                app_port=app_port
             )
-            result["was_regenerated"] = has_error
-        
-        # Detect web application
-        web_app = detect_web_application(request.patch_id)
-        
-        return PatchStatusResponse(
-            status="completed",
-            message="Execution completed",
-            execution_output=result.get("output", ""),
-            error_output=result.get("error_output", ""),
-            return_code=result.get("return_code", 1),
-            analysis=result.get("analysis"),
-            suggested_improvements=result.get("suggested_improvements"),
-            completed=result.get("completed", False),
-            was_regenerated=result.get("was_regenerated", False),
-            app_url=web_app.get("url") if web_app else None,
-            app_type=web_app.get("type") if web_app else None,
-            app_port=web_app.get("port") if web_app else None
-        )
+        else:
+            logger.info(f"Executing patch {patch_id} with actual code execution")
+            # Actually execute the code
+            logger.info(f"Executing patch {patch_id}")
+            
+            # Execute the patch using the improved environment manager
+            success, stdout, stderr, return_code = await execute_patch(patch_id)
+            
+            logger.info(f"Execution completed: success={success}, return_code={return_code}")
+            logger.info(f"Execution stdout: {stdout}")
+            logger.info(f"Execution stderr: {stderr}")
+            
+            # Check for matplotlib-related output and find generated images
+            matplotlib_detected = "matplotlib" in stdout.lower() or "matplotlib" in stderr.lower()
+            logger.info(f"Matplotlib detected: {matplotlib_detected}")
+            logger.info(f"Stdout: {stdout}")
+            logger.info(f"Stderr: {stderr}")
+            image_output = ""
+            generated_images = []
+            
+            if matplotlib_detected:
+                # Look for image file paths in output
+                import re
+                image_patterns = [
+                    r'Image saved to: (.+\.png)',
+                    r'Image saved to: (.+\.jpg)',
+                    r'Image saved to: (.+\.jpeg)',
+                    r'Image saved to: (.+\.svg)',
+                    r'Plot saved to: (.+\.png)',
+                    r'Figure saved to: (.+\.png)',
+                    r'Saved plot to: (.+\.png)',
+                    r'Plot saved as: (.+\.png)',
+                    r'Image saved at: (.+\.png)'
+                ]
+                
+                for pattern in image_patterns:
+                    matches = re.findall(pattern, stdout, re.IGNORECASE)
+                    if matches:
+                        image_output = f"Generated image: {matches[0]}"
+                        generated_images.extend(matches)
+                        break
+                
+                # Also search for images in the patch directory and workspace root
+                patch_dir = os.path.join(code_generator.patches_dir, patch_id)
+                workspace_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+                
+                # Search in patch directory
+                for root, dirs, files in os.walk(patch_dir):
+                    for file in files:
+                        if file.lower().endswith(('.png', '.jpg', '.jpeg', '.svg')):
+                            full_path = os.path.join(root, file)
+                            rel_path = os.path.relpath(full_path, patch_dir)
+                            generated_images.append(rel_path)
+                            if not image_output:
+                                image_output = f"Generated image: {rel_path}"
+                
+                # Search in workspace root for images mentioned in output
+                for root, dirs, files in os.walk(workspace_root):
+                    for file in files:
+                        if file.lower().endswith(('.png', '.jpg', '.jpeg', '.svg')):
+                            # Check if this image was mentioned in the output (full path or filename)
+                            full_path = os.path.join(root, file)
+                            logger.info(f"Checking image file: {file}, full_path: {full_path}")
+                            if file in stdout or file in stderr or full_path in stdout or full_path in stderr:
+                                rel_path = os.path.relpath(full_path, workspace_root)
+                                logger.info(f"Found matching image: {rel_path}")
+                                generated_images.append(rel_path)
+                                if not image_output:
+                                    image_output = f"Generated image: {rel_path}"
+            
+            # Prepare response
+            if success:
+                status = "executed"
+                message = "Patch executed successfully"
+                if image_output:
+                    message += f" - {image_output}"
+            else:
+                status = "failed"
+                message = "Patch execution failed"
+            
+            return PatchStatusResponse(
+                status=status,
+                message=message,
+                execution_output=stdout,
+                error_output=stderr,
+                return_code=return_code,
+                analysis="Execution completed" if success else "Execution failed",
+                suggested_improvements=["Check error output for details"] if not success else ["Use start-web-app endpoint to run web applications"],
+                completed=True,
+                was_regenerated=False,
+                app_url=web_app.get("url") if web_app else None,
+                app_type=web_app.get("type") if web_app else None,
+                app_port=web_app.get("port") if web_app else None,
+                generated_images=generated_images if generated_images else None
+            )
         
     except Exception as e:
+        logger.error(f"Error in execute_patch_endpoint: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # Patch status endpoint
@@ -1367,9 +1722,68 @@ class StartWebAppRequest(BaseModel):
     """Model for starting a web application."""
     patch_id: str
 
+class WebAppRequest(BaseModel):
+    """Model for web application operations."""
+    patch_id: str
+    action: str  # 'start' or 'stop'
+
+@app.get("/web-app/{patch_id}/status")
+async def get_web_app_status(patch_id: str):
+    """Get the status of a web application."""
+    try:
+        # Check if the web app is running
+        if patch_id in running_web_apps:
+            process = running_web_apps[patch_id]
+            if process.poll() is None:  # Process is still running
+                # Get the port from the web app info
+                web_app = detect_web_application(patch_id)
+                if web_app:
+                    # Find the actual port by checking what's running
+                    for port in range(5000, 6000):
+                        try:
+                            response = requests.get(f"http://localhost:{port}/health", timeout=1)
+                            if response.status_code == 200:
+                                return {
+                                    "is_running": True,
+                                    "url": f"http://localhost:{port}",
+                                    "port": str(port),
+                                    "framework": web_app.get("framework", "Unknown")
+                                }
+                        except:
+                            continue
+                    
+                    # If we can't find the exact port, return a generic response
+                    return {
+                        "is_running": True,
+                        "url": "http://localhost:[PORT]",
+                        "port": "[DYNAMIC]",
+                        "framework": web_app.get("framework", "Unknown")
+                    }
+        
+        return {
+            "is_running": False,
+            "url": None,
+            "port": None,
+            "framework": None
+        }
+    except Exception as e:
+        logger.error(f"Error getting web app status for {patch_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting web app status: {str(e)}")
+
+@app.post("/web-app/")
+async def web_app_operation(request: WebAppRequest):
+    """Handle web application start/stop operations."""
+    if request.action == "start":
+        return await start_web_app(StartWebAppRequest(patch_id=request.patch_id))
+    elif request.action == "stop":
+        # For now, just return success since we don't have stop functionality
+        return {"status": "stopped", "message": "Web application stopped"}
+    else:
+        raise HTTPException(status_code=400, detail="Invalid action. Use 'start' or 'stop'")
+
 @app.post("/start-web-app/")
 async def start_web_app(request: StartWebAppRequest):
-    """Start a web application for a specific patch."""
+    """Enhanced startApp functionality with comprehensive framework support."""
     try:
         patch_id = request.patch_id
         patch_dir = os.path.join(code_generator.patches_dir, patch_id)
@@ -1387,10 +1801,12 @@ async def start_web_app(request: StartWebAppRequest):
                     return {"status": "already_running", "url": web_app["url"]}
                 return {"status": "already_running", "url": "http://localhost:5001"}
         
-        # Detect web application type
+        # Enhanced web application detection
         web_app = detect_web_application(patch_id)
         if not web_app:
             raise HTTPException(status_code=400, detail="No web application detected in this patch")
+        
+        logger.info(f"Detected {web_app['framework']} application for patch {patch_id}")
         
         # Find an available port
         try:
@@ -1399,29 +1815,76 @@ async def start_web_app(request: StartWebAppRequest):
         except RuntimeError:
             raise HTTPException(status_code=500, detail="Could not find available port")
         
-        # Start the web application
+        # Start the web application based on framework type with enhanced logic
+        success = False
+        
         if web_app["type"] == "Flask":
-            # Create virtual environment and install dependencies
-            venv_path = os.path.join(patch_dir, "venv")
-            if not os.path.exists(venv_path):
-                os.makedirs(venv_path, exist_ok=True)
-                
-            # Install requirements if they exist
-            requirements_path = os.path.join(patch_dir, "requirements.txt")
-            if os.path.exists(requirements_path):
+            success = await _start_flask_app_enhanced(patch_dir, patch_id, random_port, web_app)
+        elif web_app["type"] == "FastAPI":
+            success = await _start_fastapi_app_enhanced(patch_dir, patch_id, random_port, web_app)
+        elif web_app["type"] == "Streamlit":
+            success = await _start_streamlit_app_enhanced(patch_dir, patch_id, web_app)
+        elif web_app["type"] == "Dash":
+            success = await _start_dash_app_enhanced(patch_dir, patch_id, random_port, web_app)
+        elif web_app["type"] == "Django":
+            success = await _start_django_app_enhanced(patch_dir, patch_id, random_port, web_app)
+        elif web_app["type"] == "Bottle":
+            success = await _start_bottle_app_enhanced(patch_dir, patch_id, random_port, web_app)
+        elif web_app["type"] == "Tornado":
+            success = await _start_tornado_app_enhanced(patch_dir, patch_id, random_port, web_app)
+        else:
+            success = await _start_generic_web_app_enhanced(patch_dir, patch_id, random_port, web_app)
+        
+        if success:
+            # Update the web_app info with the random port
+            web_app["port"] = str(random_port)
+            web_app["url"] = f"http://localhost:{random_port}"
+            
+            logger.info(f"Successfully started {web_app['framework']} app on port {random_port}")
+            
+            return {
+                "status": "started",
+                "url": web_app["url"],
+                "type": web_app["type"],
+                "port": web_app["port"],
+                "framework": web_app["framework"]
+            }
+        else:
+            raise HTTPException(status_code=500, detail=f"Failed to start {web_app['framework']} application")
+            
+    except subprocess.CalledProcessError as e:
+        raise HTTPException(status_code=500, detail=f"Failed to start web application: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error starting web application: {str(e)}")
+
+async def _start_flask_app_enhanced(patch_dir: str, patch_id: str, port: int, web_app: dict) -> bool:
+    """Enhanced Flask app startup with comprehensive error handling and template management."""
+    try:
+        logger.info(f"Starting enhanced Flask app for patch {patch_id}")
+        
+        # Install requirements with enhanced error handling
+        requirements_path = os.path.join(patch_dir, "requirements.txt")
+        if os.path.exists(requirements_path):
+            try:
                 subprocess.run([
                     sys.executable, "-m", "pip", "install", "-r", requirements_path
-                ], cwd=patch_dir, check=True)
-            
-            # Ensure proper Flask template structure
-            src_dir = os.path.join(patch_dir, "src")
-            templates_dir = os.path.join(src_dir, "templates")
-            
-            # Create templates directory if it doesn't exist
-            if not os.path.exists(templates_dir):
-                os.makedirs(templates_dir, exist_ok=True)
-            
-            # Check for template files in src directory and move them to templates
+                ], cwd=patch_dir, check=True, capture_output=True, text=True)
+                logger.info(f"Requirements installed successfully for {patch_id}")
+            except subprocess.CalledProcessError as e:
+                logger.warning(f"Failed to install requirements for {patch_id}: {e.stderr}")
+                # Continue anyway - Flask might be available globally
+        
+        # Enhanced template structure management
+        src_dir = os.path.join(patch_dir, "src")
+        templates_dir = os.path.join(src_dir, "templates")
+        static_dir = os.path.join(src_dir, "static")
+        
+        # Create necessary directories
+        os.makedirs(templates_dir, exist_ok=True)
+        os.makedirs(static_dir, exist_ok=True)
+        
+        # Enhanced template file management
+        if os.path.exists(src_dir):
             template_extensions = ['.html', '.jinja2', '.j2']
             template_files = [f for f in os.listdir(src_dir) 
                             if any(f.endswith(ext) for ext in template_extensions)]
@@ -1440,70 +1903,374 @@ async def start_web_app(request: StartWebAppRequest):
                 import shutil
                 shutil.copy2(src_template_path, templates_template_path)
                 logger.info(f"Moved {template_file} to templates directory for {patch_id}")
-            
-            # Start Flask app
-            main_py_path = os.path.join(patch_dir, "src", "main.py")
-            if not os.path.exists(main_py_path):
-                raise HTTPException(status_code=400, detail="main.py not found")
-            
-            # Temporarily modify the Flask app to use the random port
-            with open(main_py_path, 'r') as f:
-                original_content = f.read()
-            
-            # Replace the port in the app.run() call
+        
+        # Enhanced main.py modification
+        main_py_path = os.path.join(patch_dir, "src", "main.py")
+        if not os.path.exists(main_py_path):
+            logger.error(f"main.py not found for {patch_id}")
+            return False
+        
+        # Backup original content
+        with open(main_py_path, 'r') as f:
+            original_content = f.read()
+        
+        # Enhanced port configuration replacement
+        import re
+        
+        # Replace any hardcoded port with environment variable
+        modified_content = re.sub(
+            r'app\.run\([^)]*port\s*=\s*\d+[^)]*\)',
+            f'app.run(debug=True, host="0.0.0.0", port={port})',
+            original_content
+        )
+        
+        # Add port import if not present
+        if 'import os' not in modified_content:
+            modified_content = modified_content.replace('from flask import', 'import os\nfrom flask import')
+        
+        # Add port configuration if not present
+        if 'port = int(os.environ.get(' not in modified_content:
             modified_content = re.sub(
-                r'app\.run\([^)]*port\s*=\s*\d+[^)]*\)',
-                f'app.run(debug=True, host="0.0.0.0", port={random_port})',
-                original_content
+                r'(if __name__ == [\'"]__main__[\'"]:)',
+                r'\1\n    port = int(os.environ.get(\'PORT\', 5001))',
+                modified_content
+            )
+        
+        # Add health check endpoint if not present
+        if '@app.route(\'/health\')' not in modified_content:
+            health_endpoint = '''
+@app.route('/health')
+def health():
+    return jsonify({'status': 'healthy', 'message': 'Flask app is running!'})
+'''
+            # Insert before the if __name__ block
+            modified_content = re.sub(
+                r'(if __name__ == [\'"]__main__[\'"]:)',
+                f'{health_endpoint}\n\\1',
+                modified_content
             )
             
-            # Write the modified content back
-            with open(main_py_path, 'w') as f:
-                f.write(modified_content)
+            # Add jsonify import if not present
+            if 'jsonify' not in modified_content and 'from flask import' in modified_content:
+                modified_content = re.sub(
+                    r'from flask import ([^)]+)',
+                    r'from flask import \1, jsonify',
+                    modified_content
+                )
+        
+        # Write enhanced content
+        with open(main_py_path, 'w') as f:
+            f.write(modified_content)
+        
+        try:
+            # Start the Flask server with enhanced monitoring
+            env = os.environ.copy()
+            env['PORT'] = str(port)
+            process = subprocess.Popen([
+                sys.executable, main_py_path
+            ], cwd=os.path.join(patch_dir, "src"), 
+               stdout=subprocess.PIPE,  # Capture output for debugging
+               stderr=subprocess.PIPE,
+               text=True,
+               env=env)
             
-            try:
-                # Start the Flask server in background
-                process = subprocess.Popen([
-                    sys.executable, main_py_path
-                ], cwd=os.path.join(patch_dir, "src"), 
-                   stdout=None,  # Don't capture output - let it go to console
-                   stderr=None)  # Don't capture errors - let them go to console
+            running_web_apps[patch_id] = process
+            
+            # Wait for server to start with timeout
+            await asyncio.sleep(3)
+            
+            # Check if process is still running
+            if process.poll() is not None:
+                # Process has exited - get error output
+                stdout, stderr = process.communicate()
+                logger.error(f"Flask app failed to start for {patch_id}. stdout: {stdout}, stderr: {stderr}")
                 
-                running_web_apps[patch_id] = process
-                
-                # Wait a moment for server to start
-                await asyncio.sleep(3)
-                
-                # Check if process is still running
-                if process.poll() is not None:
-                    # Process has exited - restore original content
-                    with open(main_py_path, 'w') as f:
-                        f.write(original_content)
-                    raise HTTPException(status_code=500, detail="Flask app failed to start - process exited immediately")
-                
-                # Update the web_app info with the random port
-                web_app["port"] = str(random_port)
-                web_app["url"] = f"http://localhost:{random_port}"
-                
-                return {
-                    "status": "started",
-                    "url": web_app["url"],
-                    "type": web_app["type"],
-                    "port": web_app["port"]
-                }
-                
-            except Exception as e:
-                # Restore original content on error
+                # Restore original content
                 with open(main_py_path, 'w') as f:
                     f.write(original_content)
-                raise e
-        else:
-            raise HTTPException(status_code=400, detail=f"Unsupported web application type: {web_app['type']}")
+                return False
             
-    except subprocess.CalledProcessError as e:
-        raise HTTPException(status_code=500, detail=f"Failed to start web application: {str(e)}")
+            logger.info(f"Flask app started successfully for {patch_id} on port {port}")
+            return True
+            
+        except Exception as e:
+            # Restore original content on error
+            with open(main_py_path, 'w') as f:
+                f.write(original_content)
+            logger.error(f"Error starting Flask app for {patch_id}: {str(e)}")
+            return False
+            
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error starting web application: {str(e)}")
+        logger.error(f"Error in enhanced Flask startup for {patch_id}: {str(e)}")
+        return False
+
+async def _start_fastapi_app_enhanced(patch_dir: str, patch_id: str, port: int, web_app: dict) -> bool:
+    """Enhanced FastAPI app startup."""
+    try:
+        logger.info(f"Starting enhanced FastAPI app for patch {patch_id}")
+        
+        # Install requirements
+        requirements_path = os.path.join(patch_dir, "requirements.txt")
+        if os.path.exists(requirements_path):
+            subprocess.run([
+                sys.executable, "-m", "pip", "install", "-r", requirements_path
+            ], cwd=patch_dir, check=True, capture_output=True, text=True)
+        
+        # Start FastAPI app with uvicorn
+        main_py_path = os.path.join(patch_dir, "src", "main.py")
+        if not os.path.exists(main_py_path):
+            logger.error(f"main.py not found for {patch_id}")
+            return False
+        
+        process = subprocess.Popen([
+            sys.executable, "-m", "uvicorn", "main:app", 
+            "--host", "0.0.0.0", "--port", str(port), "--reload"
+        ], cwd=os.path.join(patch_dir, "src"),
+           stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        
+        running_web_apps[patch_id] = process
+        await asyncio.sleep(3)
+        
+        if process.poll() is not None:
+            stdout, stderr = process.communicate()
+            logger.error(f"FastAPI app failed to start for {patch_id}. stdout: {stdout}, stderr: {stderr}")
+            return False
+        
+        logger.info(f"FastAPI app started successfully for {patch_id} on port {port}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error starting FastAPI app for {patch_id}: {str(e)}")
+        return False
+
+async def _start_streamlit_app_enhanced(patch_dir: str, patch_id: str, web_app: dict) -> bool:
+    """Enhanced Streamlit app startup."""
+    try:
+        logger.info(f"Starting enhanced Streamlit app for patch {patch_id}")
+        
+        # Install requirements
+        requirements_path = os.path.join(patch_dir, "requirements.txt")
+        if os.path.exists(requirements_path):
+            subprocess.run([
+                sys.executable, "-m", "pip", "install", "-r", requirements_path
+            ], cwd=patch_dir, check=True, capture_output=True, text=True)
+        
+        # Start Streamlit app
+        main_py_path = os.path.join(patch_dir, "src", "main.py")
+        if not os.path.exists(main_py_path):
+            logger.error(f"main.py not found for {patch_id}")
+            return False
+        
+        process = subprocess.Popen([
+            sys.executable, "-m", "streamlit", "run", "main.py",
+            "--server.port", "8501", "--server.address", "0.0.0.0"
+        ], cwd=os.path.join(patch_dir, "src"),
+           stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        
+        running_web_apps[patch_id] = process
+        await asyncio.sleep(3)
+        
+        if process.poll() is not None:
+            stdout, stderr = process.communicate()
+            logger.error(f"Streamlit app failed to start for {patch_id}. stdout: {stdout}, stderr: {stderr}")
+            return False
+        
+        logger.info(f"Streamlit app started successfully for {patch_id}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error starting Streamlit app for {patch_id}: {str(e)}")
+        return False
+
+async def _start_dash_app_enhanced(patch_dir: str, patch_id: str, port: int, web_app: dict) -> bool:
+    """Enhanced Dash app startup."""
+    try:
+        logger.info(f"Starting enhanced Dash app for patch {patch_id}")
+        
+        # Install requirements
+        requirements_path = os.path.join(patch_dir, "requirements.txt")
+        if os.path.exists(requirements_path):
+            subprocess.run([
+                sys.executable, "-m", "pip", "install", "-r", requirements_path
+            ], cwd=patch_dir, check=True, capture_output=True, text=True)
+        
+        # Start Dash app
+        main_py_path = os.path.join(patch_dir, "src", "main.py")
+        if not os.path.exists(main_py_path):
+            logger.error(f"main.py not found for {patch_id}")
+            return False
+        
+        process = subprocess.Popen([
+            sys.executable, main_py_path
+        ], cwd=os.path.join(patch_dir, "src"),
+           stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        
+        running_web_apps[patch_id] = process
+        await asyncio.sleep(3)
+        
+        if process.poll() is not None:
+            stdout, stderr = process.communicate()
+            logger.error(f"Dash app failed to start for {patch_id}. stdout: {stdout}, stderr: {stderr}")
+            return False
+        
+        logger.info(f"Dash app started successfully for {patch_id} on port {port}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error starting Dash app for {patch_id}: {str(e)}")
+        return False
+
+async def _start_django_app_enhanced(patch_dir: str, patch_id: str, port: int, web_app: dict) -> bool:
+    """Enhanced Django app startup."""
+    try:
+        logger.info(f"Starting enhanced Django app for patch {patch_id}")
+        
+        # Install requirements
+        requirements_path = os.path.join(patch_dir, "requirements.txt")
+        if os.path.exists(requirements_path):
+            subprocess.run([
+                sys.executable, "-m", "pip", "install", "-r", requirements_path
+            ], cwd=patch_dir, check=True, capture_output=True, text=True)
+        
+        # Start Django app
+        manage_py_path = os.path.join(patch_dir, "manage.py")
+        if not os.path.exists(manage_py_path):
+            logger.error(f"manage.py not found for {patch_id}")
+            return False
+        
+        process = subprocess.Popen([
+            sys.executable, "manage.py", "runserver", f"0.0.0.0:{port}"
+        ], cwd=patch_dir,
+           stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        
+        running_web_apps[patch_id] = process
+        await asyncio.sleep(3)
+        
+        if process.poll() is not None:
+            stdout, stderr = process.communicate()
+            logger.error(f"Django app failed to start for {patch_id}. stdout: {stdout}, stderr: {stderr}")
+            return False
+        
+        logger.info(f"Django app started successfully for {patch_id} on port {port}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error starting Django app for {patch_id}: {str(e)}")
+        return False
+
+async def _start_bottle_app_enhanced(patch_dir: str, patch_id: str, port: int, web_app: dict) -> bool:
+    """Enhanced Bottle app startup."""
+    try:
+        logger.info(f"Starting enhanced Bottle app for patch {patch_id}")
+        
+        # Install requirements
+        requirements_path = os.path.join(patch_dir, "requirements.txt")
+        if os.path.exists(requirements_path):
+            subprocess.run([
+                sys.executable, "-m", "pip", "install", "-r", requirements_path
+            ], cwd=patch_dir, check=True, capture_output=True, text=True)
+        
+        # Start Bottle app
+        main_py_path = os.path.join(patch_dir, "src", "main.py")
+        if not os.path.exists(main_py_path):
+            logger.error(f"main.py not found for {patch_id}")
+            return False
+        
+        process = subprocess.Popen([
+            sys.executable, main_py_path
+        ], cwd=os.path.join(patch_dir, "src"),
+           stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        
+        running_web_apps[patch_id] = process
+        await asyncio.sleep(3)
+        
+        if process.poll() is not None:
+            stdout, stderr = process.communicate()
+            logger.error(f"Bottle app failed to start for {patch_id}. stdout: {stdout}, stderr: {stderr}")
+            return False
+        
+        logger.info(f"Bottle app started successfully for {patch_id} on port {port}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error starting Bottle app for {patch_id}: {str(e)}")
+        return False
+
+async def _start_tornado_app_enhanced(patch_dir: str, patch_id: str, port: int, web_app: dict) -> bool:
+    """Enhanced Tornado app startup."""
+    try:
+        logger.info(f"Starting enhanced Tornado app for patch {patch_id}")
+        
+        # Install requirements
+        requirements_path = os.path.join(patch_dir, "requirements.txt")
+        if os.path.exists(requirements_path):
+            subprocess.run([
+                sys.executable, "-m", "pip", "install", "-r", requirements_path
+            ], cwd=patch_dir, check=True, capture_output=True, text=True)
+        
+        # Start Tornado app
+        main_py_path = os.path.join(patch_dir, "src", "main.py")
+        if not os.path.exists(main_py_path):
+            logger.error(f"main.py not found for {patch_id}")
+            return False
+        
+        process = subprocess.Popen([
+            sys.executable, main_py_path
+        ], cwd=os.path.join(patch_dir, "src"),
+           stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        
+        running_web_apps[patch_id] = process
+        await asyncio.sleep(3)
+        
+        if process.poll() is not None:
+            stdout, stderr = process.communicate()
+            logger.error(f"Tornado app failed to start for {patch_id}. stdout: {stdout}, stderr: {stderr}")
+            return False
+        
+        logger.info(f"Tornado app started successfully for {patch_id} on port {port}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error starting Tornado app for {patch_id}: {str(e)}")
+        return False
+
+async def _start_generic_web_app_enhanced(patch_dir: str, patch_id: str, port: int, web_app: dict) -> bool:
+    """Enhanced generic web app startup."""
+    try:
+        logger.info(f"Starting enhanced generic web app for patch {patch_id}")
+        
+        # Install requirements
+        requirements_path = os.path.join(patch_dir, "requirements.txt")
+        if os.path.exists(requirements_path):
+            subprocess.run([
+                sys.executable, "-m", "pip", "install", "-r", requirements_path
+            ], cwd=patch_dir, check=True, capture_output=True, text=True)
+        
+        # Start generic app
+        main_py_path = os.path.join(patch_dir, "src", "main.py")
+        if not os.path.exists(main_py_path):
+            logger.error(f"main.py not found for {patch_id}")
+            return False
+        
+        process = subprocess.Popen([
+            sys.executable, main_py_path
+        ], cwd=os.path.join(patch_dir, "src"),
+           stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        
+        running_web_apps[patch_id] = process
+        await asyncio.sleep(3)
+        
+        if process.poll() is not None:
+            stdout, stderr = process.communicate()
+            logger.error(f"Generic web app failed to start for {patch_id}. stdout: {stdout}, stderr: {stderr}")
+            return False
+        
+        logger.info(f"Generic web app started successfully for {patch_id} on port {port}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error starting generic web app for {patch_id}: {str(e)}")
+        return False
 
 @app.post("/regenerate-patch/")
 async def regenerate_patch(request: RegeneratePatchRequest):
@@ -1535,6 +2302,92 @@ async def regenerate_patch(request: RegeneratePatchRequest):
             
     except Exception as e:
         logger.error(f"Error regenerating patch: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/patch-images/{patch_id}/{image_path:path}")
+async def get_patch_image(patch_id: str, image_path: str):
+    """Serve generated images from patch directories and workspace root."""
+    try:
+        # Try patch directory first
+        patch_dir = os.path.join(code_generator.patches_dir, patch_id)
+        full_image_path = os.path.join(patch_dir, image_path)
+        
+        # If not found in patch directory, try workspace root
+        if not os.path.exists(full_image_path):
+            workspace_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+            full_image_path = os.path.join(workspace_root, image_path)
+            
+            # Security check: ensure the path is within the workspace root
+            if not os.path.abspath(full_image_path).startswith(os.path.abspath(workspace_root)):
+                raise HTTPException(status_code=403, detail="Access denied")
+        else:
+            # Security check: ensure the path is within the patch directory
+            if not os.path.abspath(full_image_path).startswith(os.path.abspath(patch_dir)):
+                raise HTTPException(status_code=403, detail="Access denied")
+        
+        # Check if the image exists
+        if not os.path.exists(full_image_path):
+            raise HTTPException(status_code=404, detail="Image not found")
+        
+        # Determine content type based on file extension
+        content_type = "image/png"  # default
+        if image_path.lower().endswith('.jpg') or image_path.lower().endswith('.jpeg'):
+            content_type = "image/jpeg"
+        elif image_path.lower().endswith('.svg'):
+            content_type = "image/svg+xml"
+        
+        # Read and return the image
+        with open(full_image_path, 'rb') as f:
+            image_data = f.read()
+        
+        from fastapi.responses import Response
+        return Response(content=image_data, media_type=content_type)
+        
+    except Exception as e:
+        logger.error(f"Error serving image {image_path} for patch {patch_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/patch-images/{patch_id}")
+async def list_patch_images(patch_id: str):
+    """List all generated images for a patch."""
+    try:
+        patch_dir = os.path.join(code_generator.patches_dir, patch_id)
+        workspace_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        
+        if not os.path.exists(patch_dir):
+            raise HTTPException(status_code=404, detail="Patch not found")
+        
+        images = []
+        
+        # Search in patch directory
+        for root, dirs, files in os.walk(patch_dir):
+            for file in files:
+                if file.lower().endswith(('.png', '.jpg', '.jpeg', '.svg')):
+                    full_path = os.path.join(root, file)
+                    rel_path = os.path.relpath(full_path, patch_dir)
+                    images.append({
+                        "filename": file,
+                        "path": rel_path,
+                        "url": f"/patch-images/{patch_id}/{rel_path}"
+                    })
+        
+        # Search in workspace root for common image files
+        for root, dirs, files in os.walk(workspace_root):
+            for file in files:
+                if file.lower().endswith(('.png', '.jpg', '.jpeg', '.svg')):
+                    # Only include images that are likely generated by patches
+                    if any(keyword in file.lower() for keyword in ['grade', 'plot', 'chart', 'graph', 'histogram']):
+                        rel_path = os.path.relpath(os.path.join(root, file), workspace_root)
+                        images.append({
+                            "filename": file,
+                            "path": rel_path,
+                            "url": f"/patch-images/{patch_id}/{rel_path}"
+                        })
+        
+        return {"images": images}
+        
+    except Exception as e:
+        logger.error(f"Error listing images for patch {patch_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":

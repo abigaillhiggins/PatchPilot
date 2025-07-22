@@ -128,6 +128,9 @@ scripts:
                             <button onclick="regenerateCode(currentPatch.patch_id)" class="w-full px-4 py-2 bg-yellow-100 text-yellow-700 rounded-md text-sm hover:bg-yellow-200">
                                 <i class="fas fa-sync-alt mr-2"></i>Regenerate Code
                             </button>
+                            <button onclick="displayPatchImages()" class="w-full px-4 py-2 bg-green-100 text-green-700 rounded-md text-sm hover:bg-green-200">
+                                <i class="fas fa-image mr-2"></i>Display Images
+                            </button>
                             <button onclick="viewPatchFiles()" class="w-full btn-secondary px-4 py-2 rounded-md text-sm">
                                 <i class="fas fa-folder mr-2"></i>View Files
                             </button>
@@ -302,4 +305,37 @@ scripts:
             </div>
         </div>
     </div>
+</div>
+
+<!-- Image Display Modal -->
+<div id="image-display-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 hidden z-50">
+    <div class="flex items-center justify-center min-h-screen p-4">
+        <div class="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-screen overflow-y-auto">
+            <div class="flex items-center justify-between p-6 border-b">
+                <h3 class="text-lg font-semibold text-gray-900">Generated Images</h3>
+                <button onclick="hideImageDisplayModal()" class="text-gray-400 hover:text-gray-600">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="p-6">
+                <div id="image-loading" class="text-center py-8">
+                    <div class="loading"></div>
+                    <span class="ml-2 text-gray-500">Loading images...</span>
+                </div>
+                <div id="image-content" class="hidden">
+                    <div id="image-list" class="space-y-4">
+                        <!-- Images will be loaded here -->
+                    </div>
+                    <div id="no-images" class="hidden text-center py-8">
+                        <div class="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                            <i class="fas fa-image text-gray-400 text-2xl"></i>
+                        </div>
+                        <h3 class="text-lg font-medium text-gray-900 mb-2">No images found</h3>
+                        <p class="text-gray-500">This patch hasn't generated any images yet. Try executing the patch first.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
 </div> 

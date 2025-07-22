@@ -47,6 +47,7 @@ api_endpoints:
   run_patch: "/run-patch/"
   execute_patch: "/execute-patch/"
   patch_status: "/patch-status/"
+  patch_images: "/patch-images/"
 
 # Theme colors (red theme)
 theme_colors:
